@@ -1,5 +1,5 @@
 # GNN ENSO Modeling
-Final CS224w project authored by Ethan Zhang, Yuchen Li, and Saahil Sundaresan
+Final CS224w project authored by Ethan Zhang, Yuchen Li, and Saahil Sundaresan. Forecasting ONI using GNNs.
 
 --------------------
 
