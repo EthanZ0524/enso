@@ -5,7 +5,7 @@ Final CS224w project authored by Ethan Zhang, Yuchen Li, and Saahil Sundaresan. 
 
 ## Setup Instructions
 ### Data
-Create a ./data folder in the home directory. Then, unzip the enso_round1_train file found at [this](https://tianchi.aliyun.com/dataset/98942) link into the data folder.
+Create a ./data/raw folder in the home directory. Then, unzip the enso_round1_train file found at [this](https://tianchi.aliyun.com/dataset/98942) link into the data folder.
 
 ### Dependencies
 Run the following to install the necessary packages.
