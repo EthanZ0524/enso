@@ -15,5 +15,8 @@ pip install -r requirements.txt
 
 ### Usage
 
-
+### To-do's:
+- Python-ize and train GNNRNN (Ethan)
+- Implement SODA PyG Dataset class
+- Clean up/sanity check CMIP PyG Dataset class
 
