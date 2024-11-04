@@ -13,31 +13,49 @@ from torch_geometric.loader import DataLoader
 REPO_ROOT = subprocess.check_output(['git', 'rev-parse', '--show-toplevel']).strip().decode('utf-8')
 VAR_NAMES = ['sst', 't300', 'ua', 'va'] # hardcoded, sorry...
 
-# Extremely hacky way to create an edge tensor
-rows, cols = 24, 72
-adjacency_list = []
+def construct_adjacency_list(method="grid"):
+    """
+    This generates the adjacency list for a 24x72 grid of nodes.
 
-for i in range(rows):
-    for j in range(cols):
-        current_index = i * cols + j
+    Param:
+        method (str): method to use for constructing adjacency list. 
+            Options: "grid": trivial connection of each node to its 4 up-down-left-right
+                             neighbors, if they exist
 
-        if i > 0: # row above
-            above_index = (i - 1) * cols + j
-            adjacency_list.append((current_index, above_index))
+                     "mesh1": to be implemented
 
-        if i < rows - 1: # row below
-            below_index = (i + 1) * cols + j
-            adjacency_list.append((current_index, below_index))
+                     "mesh2": to be implemented
 
-        if j > 0: # col left
-            left_index = i * cols + (j - 1)
-            adjacency_list.append((current_index, left_index))
+    Returns:
+        np.array: adjacency list of shape (2, num_edges) 
+    """
 
-        if j < cols - 1: # col right
-            right_index = i * cols + (j + 1)
-            adjacency_list.append((current_index, right_index))
+    rows, cols = 24, 72
+    adjacency_list = []
 
-adj_t = np.array(adjacency_list).T
+    if method == "grid":    
+        for i in range(rows):
+            for j in range(cols):
+                current_index = i * cols + j
+
+                if i > 0: # row above
+                    above_index = (i - 1) * cols + j
+                    adjacency_list.append((current_index, above_index))
+
+                if i < rows - 1: # row below
+                    below_index = (i + 1) * cols + j
+                    adjacency_list.append((current_index, below_index))
+
+                if j > 0: # col left
+                    left_index = i * cols + (j - 1)
+                    adjacency_list.append((current_index, left_index))
+
+                if j < cols - 1: # col right
+                    right_index = i * cols + (j + 1)
+                    adjacency_list.append((current_index, right_index))
+
+    adj_t = np.array(adjacency_list).T
+    return adj_t
 
 '''
 Jankiest thing ever
@@ -68,7 +86,7 @@ class cmip(Dataset):
     def len(self):
         return len(xr.open_dataset(f'{REPO_ROOT}/data/raw/CMIP_train.nc').year.values) * len(xr.open_dataset(f'{REPO_ROOT}/data/raw/CMIP_train.nc').month.values)
     
-    def get(self, idx):
+    def get(self, idx, adjacency_method="grid"):
         x_unprocessed = xr.open_dataset(f'{REPO_ROOT}/data/raw/CMIP_train.nc')
         year = idx // 36
         month = idx % 36
@@ -78,6 +96,7 @@ class cmip(Dataset):
         x = np.transpose(temp, (1, 2, 0)).reshape(-1, 4) # 4 x (24 x 72). Caution: stacks 72's on top of each other, not 24's!
 
         # Creating graph from x:
+        adj_t = construct_adjacency_list(method=adjacency_method)
         g = Data(x=torch.from_numpy(x), edge_index=torch.from_numpy(adj_t))
 
         return (g, labels)
