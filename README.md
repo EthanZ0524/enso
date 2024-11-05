@@ -15,9 +15,9 @@ pip install -r requirements.txt
 
 ### Usage
 Run the following to train the GNNRNN.
-'''sh
+```sh
 python GNNRNN_train.py
-'''
+```
 
 Model weights of the top 3 models (lowest training losses) will be saved into the automatically-created ./checkpoints directory.
 
