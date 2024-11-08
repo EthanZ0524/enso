@@ -101,21 +101,39 @@ class cmip(Dataset):
 
         return (g, labels)
 
-# from torch.utils.data import Dataset, DataLoader
 
-# class cmip(Dataset):
-#     def __init__(self, data_dir, label_dir):
-#         self.data = xr.open_dataset(data_dir)
-#         self.labels = xr.open_dataset(label_dir)
+class soda(Dataset):
+    def __init__(self, root, transform=None):
+        super(soda, self).__init__(root, transform)
 
-#     def __len__(self):
-#         return len(self.data.year.values)
+    @property
+    def raw_file_names(self):
+        return ['SODA_train.nc', 'SODA_label.nc']
     
-#     def __getitem__(self, idx):
-#         # Returns a 36 x 24 x 72 x 4 data array and a list of 36 ground-truth ONIs. idx corresponds to the year entry
-#         temp = np.array([self.data[var].isel(year=idx).to_numpy() for var in list(self.data.data_vars)])
-#         x = np.transpose(temp, (1, 2, 3, 0))
-#         label = self.labels.isel(year=idx).nino.to_numpy()
-#         print(np.shape(label))
+    @property
+    def processed_file_names(self):
+        return 'aaa'
+    
+    def download(self):
+        pass
 
-#         return x, label
+    def process(self):
+        pass
+
+    def len(self):
+        return len(xr.open_dataset(f'{REPO_ROOT}/data/raw/SODA_train.nc').year.values) * len(xr.open_dataset(f'{REPO_ROOT}/data/raw/SODA_train.nc').month.values)
+    
+    def get(self, idx, adjacency_method="grid"):
+        x_unprocessed = xr.open_dataset(f'{REPO_ROOT}/data/raw/SODA_train.nc')
+        year = idx // 36
+        month = idx % 36
+
+        labels = torch.from_numpy(xr.open_dataset(f'{REPO_ROOT}/data/raw/SODA_label.nc')['nino'].to_numpy()[year])
+        temp = np.array([x_unprocessed[var].isel(year=year, month=month).to_numpy() for var in VAR_NAMES]) # 4 (var) x 24 (lat) x 72 (lon)
+        x = np.transpose(temp, (1, 2, 0)).reshape(-1, 4) # 4 x (24 x 72). Caution: stacks 72's on top of each other, not 24's!
+
+        # Creating graph from x:
+        adj_t = construct_adjacency_list(method=adjacency_method)
+        g = Data(x=torch.from_numpy(x), edge_index=torch.from_numpy(adj_t))
+
+        return (g, labels)
