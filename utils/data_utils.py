@@ -103,6 +103,42 @@ class cmip(Dataset):
         return (g, labels)
 
 
+class soda(Dataset):
+    def __init__(self, root, transform=None):
+        super(soda, self).__init__(root, transform)
+
+    @property
+    def raw_file_names(self):
+        return ['SODA_train.nc', 'SODA_label.nc']
+    
+    @property
+    def processed_file_names(self):
+        return 'aaa'
+    
+    def download(self):
+        pass
+
+    def process(self):
+        pass
+
+    def len(self):
+        return len(xr.open_dataset(f'{REPO_ROOT}/data/raw/SODA_train.nc').year.values) * len(xr.open_dataset(f'{REPO_ROOT}/data/raw/SODA_train.nc').month.values)
+    
+    def get(self, idx, adjacency_method="grid"):
+        x_unprocessed = xr.open_dataset(f'{REPO_ROOT}/data/raw/SODA_train.nc')
+        year = idx // 36
+        month = idx % 36
+
+        labels = torch.from_numpy(xr.open_dataset(f'{REPO_ROOT}/data/raw/SODA_label.nc')['nino'].to_numpy()[year])
+        temp = np.array([x_unprocessed[var].isel(year=year, month=month).to_numpy() for var in VAR_NAMES]) # 4 (var) x 24 (lat) x 72 (lon)
+        x = np.transpose(temp, (1, 2, 0)).reshape(-1, 4) # 4 x (24 x 72). Caution: stacks 72's on top of each other, not 24's!
+
+        # Creating graph from x:
+        adj_t = construct_adjacency_list(method=adjacency_method)
+        g = Data(x=torch.from_numpy(x), edge_index=torch.from_numpy(adj_t))
+
+        return (g, labels)
+
 class ShuffledBatchSampler(BatchSampler):
     """
     Author: Copilot (needs to be tested!)
