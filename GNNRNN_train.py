@@ -11,9 +11,12 @@ from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint
+from torch.utils.data import DataLoader, RandomSampler
 from datetime import datetime
 
 from utils.data_utils import cmip
+from utils.data_utils import ShuffledBatchSampler
+import config
 from models.GNNRNN import GNNRNN
 
 def setup_training_dirs(experiment_name: str = None, root_dir: str = "./", timestamp: str = None):
@@ -66,7 +69,11 @@ def main():
 
     model = GNNRNN(graph_emb_dim=32, hidden_dim=32, output_length=32, device=device).to(device)
     data = cmip(root=None)
-    loader = DataLoader(data, batch_size=36 * 16, shuffle=False)
+
+    batch_size = config.NUM_PREDICTION_MONTHS * 16
+    sampler = RandomSampler(data)
+    batch_sampler = ShuffledBatchSampler(sampler, batch_size=batch_size, drop_last=False)
+    loader = DataLoader(data, batch_sampler=batch_sampler)
 
     # Create the trainer
     trainer = L.Trainer(

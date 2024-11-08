@@ -9,6 +9,7 @@ import subprocess
 from torch_geometric.data import Data, Dataset
 from torch_geometric.loader import DataLoader
 
+from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
 
 REPO_ROOT = subprocess.check_output(['git', 'rev-parse', '--show-toplevel']).strip().decode('utf-8')
 VAR_NAMES = ['sst', 't300', 'ua', 'va'] # hardcoded, sorry...
@@ -101,21 +102,22 @@ class cmip(Dataset):
 
         return (g, labels)
 
-# from torch.utils.data import Dataset, DataLoader
 
-# class cmip(Dataset):
-#     def __init__(self, data_dir, label_dir):
-#         self.data = xr.open_dataset(data_dir)
-#         self.labels = xr.open_dataset(label_dir)
+class ShuffledBatchSampler(BatchSampler):
+    """
+    Author: Copilot (needs to be tested!)
+    """
+    def __iter__(self):
+        batch = []
+        for idx in self.sampler:
+            batch.append(idx)
+            if len(batch) == self.batch_size:
+                yield from self.shuffle_batch(batch)
+                batch = []
+        if len(batch) > 0:
+            yield from self.shuffle_batch(batch)
 
-#     def __len__(self):
-#         return len(self.data.year.values)
-    
-#     def __getitem__(self, idx):
-#         # Returns a 36 x 24 x 72 x 4 data array and a list of 36 ground-truth ONIs. idx corresponds to the year entry
-#         temp = np.array([self.data[var].isel(year=idx).to_numpy() for var in list(self.data.data_vars)])
-#         x = np.transpose(temp, (1, 2, 3, 0))
-#         label = self.labels.isel(year=idx).nino.to_numpy()
-#         print(np.shape(label))
+    def shuffle_batch(self, batch):
+        np.random.shuffle(batch)
+        return batch
 
-#         return x, label
