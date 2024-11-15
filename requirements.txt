@@ -2,7 +2,8 @@ torch==2.5.0
 torch-geometric==2.6.1
 numpy==2.1.2
 xarray==2024.10.0
-lightning==2.4.0
+pytorch-lightning==2.4.0
 wandb==0.18.5
 xarray==2024.10.0
 netcdf4==netcdf4-1.7.2
+pandas==1.16.0

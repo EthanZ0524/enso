@@ -3,40 +3,30 @@ import torch
 import torch.nn as nn
 import torch_geometric
 import torch_geometric.nn
-import lightning as L
+import pytorch_lightning as pl
 from torch_geometric.nn import GCNConv
 from torch_geometric.nn import global_add_pool, global_mean_pool
 
 START = 10 # Start token outside of usual range of ONI scale
-SEQ_LEN = 36
-
-if torch.cuda.is_available():
-    device = torch.device("cuda:0")  # Using the first CUDA device
-    print('Using GPU')
-else:
-    device = torch.device("cpu")
-    print('Using CPU')
 
 # Node embedding network
 # class GCN(torch.nn.Module):
-class GCN(L.LightningModule):
-
-    def __init__(self, input_dim=4, emb_dim=64, num_layers=3, dropout=0.3):
+class GCN(pl.LightningModule):
+    def __init__(self,  
+        hidden_dim, 
+        num_layers, 
+        dropout,
+        node_dim=4
+    ):
 
       super(GCN, self).__init__()
+      self.convs = torch.nn.ModuleList([GCNConv(in_channels=node_dim, out_channels=hidden_dim)] +
+            [GCNConv(in_channels=hidden_dim, out_channels=hidden_dim) for i in range(num_layers - 1)])
 
-      self.convs = torch.nn.ModuleList([GCNConv(in_channels=input_dim, out_channels=emb_dim)] +
-                  [GCNConv(in_channels=emb_dim, out_channels=emb_dim) for i in range(num_layers - 1)])
-      self.bns = torch.nn.ModuleList([torch.nn.BatchNorm1d(num_features = emb_dim) for i in range(num_layers - 1)])
+      self.bns = torch.nn.ModuleList([torch.nn.BatchNorm1d(num_features = hidden_dim) for i in range(num_layers - 1)])
       self.softmax = torch.nn.LogSoftmax()
       self.dropout = dropout
       self.pool = global_mean_pool
-
-    def reset_parameters(self):
-      for conv in self.convs:
-          conv.reset_parameters()
-      for bn in self.bns:
-          bn.reset_parameters()
 
     def forward(self, batched_data):
       x, edge_index, batch = batched_data.x.type(torch.float32), batched_data.edge_index, batched_data.batch
@@ -49,13 +39,12 @@ class GCN(L.LightningModule):
       out = self.pool(out, batch)
       return out
 
-
 '''
 The decoder takes in the final hidden state from the encoder (batch x h_e). It predicts ONI scores for a set number of 
 months into the future. 
 '''
 # class dec(nn.Module):
-class dec(L.LightningModule):
+class dec(pl.LightningModule):
     def __init__(self, hidden_dim, output_len): # hidden dim is 2(h_e)
         super(dec, self).__init__()
         self.rnn_cell = nn.RNNCell(1, hidden_dim) # +1 to concatenate predictions
@@ -92,15 +81,32 @@ batch x seq_len x graph_emb_dim matrix. This is finally fed into the encoder-dec
 The entire model is end-to-end differentiable.
 '''
 # class GNNRNN(nn.Module):
-class GNNRNN(L.LightningModule):
+class GNNRNN(pl.LightningModule):
     # graph_emb_dim = graph embedding dimension; hidden_dim: = encoder hidden dim
-    def __init__(self, graph_emb_dim, hidden_dim, output_length, device):
-
+    def __init__(self, 
+        graph_emb_dim, 
+        enc_hidden_dim, 
+        output_length, 
+        gcn_layers, 
+        gcn_dropout, 
+        lr
+    ):
+    
         super(GNNRNN, self).__init__()
-        self.ge = GCN(emb_dim=graph_emb_dim).to(device)
-        self.encoder = nn.RNN(input_size=graph_emb_dim, hidden_size=hidden_dim, batch_first=True, bidirectional=True).to(device)
-        self.decoder = dec(2 * hidden_dim, SEQ_LEN).to(device)
-        self.output_length = output_length
+        self.labels = None # need this to be num_groups x 24
+        self.shuffle_indices = None # used if we need to shuffle data and labels
+        self.learning_rate = lr
+
+        self.ge = GCN(hidden_dim=graph_emb_dim, 
+            num_layers=gcn_layers, 
+            dropout=gcn_dropout)
+
+        self.encoder = nn.RNN(input_size=graph_emb_dim, 
+            hidden_size=enc_hidden_dim, 
+            batch_first=True, 
+            bidirectional=True)
+
+        self.decoder = dec(hidden_dim=2*enc_hidden_dim, output_len=output_length)
 
     # x will be (batch x seq_len) x emb_dim 
     def forward(self, x):
@@ -112,13 +118,28 @@ class GNNRNN(L.LightningModule):
         return outputs
 
     def training_step(self, batch, batch_idx):
-        i, t = batch
-        inputs = i.to(device)
-        targets = t.to(device)
+        if batch_idx == 0:
+            if hasattr(self.trainer.datamodule.sampler, 'shuffle_indices'):
+                # triggered @ start of every epoch if shuffle=True
+                self.shuffle_indices = self.trainer.datamodule.sampler.shuffle_indices
+            labels = self.trainer.datamodule.dataset.get_labels() # N x 24
+
+            # flatten, remove remainder after batching, reshape, shuffle
+            flattened_labels =  labels.flatten()
+            flattened_labels = flattened_labels[:self.trainer.datamodule.sampler.num_groups * self.trainer.datamodule.sampler.group_size // 36 * 24] # dropping last batch
+            labels = flattened_labels.reshape(self.trainer.datamodule.sampler.num_groups, self.trainer.datamodule.sampler.group_size // 36 * 24)
+            if self.shuffle_indices is not None:
+                labels = labels[self.shuffle_indices]
+            self.labels = torch.from_numpy(labels)
+
+        inputs = batch.to(self.device)
+        targets = self.labels[batch_idx].to(self.device)
+
         outputs = self(inputs)
         criterion = torch.nn.MSELoss()
-        loss = criterion(outputs, targets.type(torch.float32)).item() # no idea why the conversion in the cmip class isn't working.
-        self.log("train_loss", loss)
+        loss = criterion(outputs, targets.type(torch.float32))
+        self.log("train_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True, batch_size=self.trainer.datamodule.sampler.group_size)
+        return loss
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=1e-5)
+        return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
