@@ -21,9 +21,9 @@ python GNNRNN_train.py
 Edit ./config.py to set model parameters accordingly. Model weights of the top model (lowest training losses) per epoch, in addition to the last model, will be saved into the automatically-created ./checkpoints directory.
 
 ### To-do's:
-~~- Python-ize and train GNNRNN~~
-- Implement ~~SODA and~~ GODAS PyG Dataset classes
-~~- Clean up/sanity check CMIP PyG Dataset class~~
+- Python-ize and train GNNRNN (DONE)
+- Implement SODA and GODAS PyG Dataset classes (SODA DONE)
+- Clean up/sanity check CMIP PyG Dataset class (DONE)
 - Write regridding code for general CMIP data (Yuchen)
 - Implement multi-GPU training
 - Feature engineering (position, etc.)
