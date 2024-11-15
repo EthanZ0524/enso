@@ -1,0 +1,5 @@
+/wandb/
+/data/
+/logs/
+/lightning_logs/
+/.DS_Store

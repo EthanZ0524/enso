@@ -1,0 +1,17 @@
+# Model params
+BATCH_SIZE = 64 # how many groups of 36
+EPOCHS = 10
+LEARNING_RATE = 1e-4
+
+GCN_NUM_LAYERS = 3
+GCN_DROPOUT = 0.3
+GCN_EMB_DIM = 32
+
+ENC_HIDDEN_DIM = 32
+
+# Run params
+EXPERIMENT_NAME = 'GNNRNN_train_small_1e-4'
+
+# Magic numbers
+NUM_INPUT_MONTHS = 36
+NUM_OUTPUT_MONTHS = 24
