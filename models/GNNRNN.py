@@ -93,6 +93,7 @@ class GNNRNN(pl.LightningModule):
     ):
     
         super(GNNRNN, self).__init__()
+        self.save_hyperparameters()
         self.labels = None # need this to be num_groups x 24
         self.shuffle_indices = None # used if we need to shuffle data and labels
         self.learning_rate = lr
