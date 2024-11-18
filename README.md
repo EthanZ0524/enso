@@ -1,5 +1,6 @@
 # GNN ENSO Modeling
 Project Authors: Ethan Zhang, Yuchen Li, and Saahil Sundaresan. Forecasting ONI using GNNs.
+The associated report can be found in the docs folder (https://github.com/EthanZ0524/enso/blob/train_test/docs/CS224w_Report.pdf).
 
 --------------------
 
