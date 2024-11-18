@@ -18,6 +18,11 @@ Run the following to train the GNNRNN.
 ```sh
 python GNNRNN_train.py
 ```
+To extend training starting from a given checkpoint, run the following:
+```sh
+python GNNRNN_train.py --extend -e {new num epochs} -f {path to checkpoint}
+```
+
 Edit ./config.py to set model parameters accordingly. Model weights of the top model (lowest training losses) per epoch, in addition to the last model, will be saved into the automatically-created ./checkpoints directory.
 
 ### To-do's:
