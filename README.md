@@ -25,9 +25,9 @@ Edit ./config.py to set model parameters accordingly. Model weights of the top m
 - Implement SODA and GODAS PyG Dataset classes (SODA DONE)
 - Clean up/sanity check CMIP PyG Dataset class (DONE)
 - Write regridding code for general CMIP data (Yuchen)
-- Implement multi-GPU training
+- Implement multi-GPU training (Saahil)
 - Feature engineering (position, etc.)
-- Write evaluation/model comparison code
+- Write evaluation/model comparison code (kind of done)
 - Implement validation dataloader/loss stuff (probably need a LightningDataModule implementation)
 - Create better adjacency matrices (Yuchen)
 
