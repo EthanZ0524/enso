@@ -6,10 +6,14 @@ import xesmf as xe
 import time 
 import os
 import pickle
+import pandas as pd 
 
 from xmip.preprocessing import rename_cmip6
 from xmip.preprocessing import correct_lon
 from xmip.preprocessing import promote_empty_dims
+
+import warnings
+warnings.filterwarnings("ignore")
 
 SAVE_DIRECTORY = "/scratch/users/yucli/enso_data/"
 
@@ -94,7 +98,7 @@ def subset_data(ds):
     
     # check the units for the depth variable 'lev'
     lev_units = "m"
-    if max(test_ds.lev.values) > 1e5: 
+    if max(ds.lev.values) > 1e5: 
         lev_units = "cm"
 
     # select top 300 m to calculate OHC
@@ -106,7 +110,7 @@ def subset_data(ds):
     thetao_300m = ds.thetao.sel(lev=depth_slice)
 
     # calculate how thick each grid cell is to take the weighted mean over depth
-    lev_midpoints = np.append([0], (test_ds.lev[1:].values + test_ds.lev[:-1].values) / 2)
+    lev_midpoints = np.append([0], (ds.lev[1:].values + ds.lev[:-1].values) / 2)
     lev_thickness = np.diff(lev_midpoints)
     lev_thickness = lev_thickness[0:len(thetao_300m.lev)] 
     
@@ -150,11 +154,8 @@ def regrid(da, model_name):
         regridder = xe.Regridder(da, output_grid, 'bilinear', filename=weight_file, 
                                 ignore_degenerate=True, reuse_weights=False, periodic=True)
 
-    da_regridded = regridder(da).load()
-    end_time = time.time()
-    elapsed_time = end_time - start_time
+    da_regridded = regridder(da)
 
-    print(f"done! (Time taken: {elapsed_time:.2f} seconds)")
     return da_regridded
 
 
@@ -185,7 +186,7 @@ def add_index_to_lat_lon(da):
 
 
 def check_if_data_exists(model, member_id):        
-    save_path = os.path.join(SAVE_DIRECTORY, f"{model}_{member_id}_sst_t300.nc")
+    save_path = os.path.join(SAVE_DIRECTORY, f"cmip/{model}_{member_id}_sst_t300.nc")
     return os.path.exists(save_path)
 
 
@@ -196,8 +197,15 @@ def calculate_ONI(sst):
     elif max(sst.lon) > 180:
         lon_slice = slice(190, 240)
 
-    nino34 = sst.sel(lat=slice(-5,5), lon=lon_slice).mean("lat", "lon")
-    
+    # Note that this is not explicitly area averaged
+    # the input is already coarsened to 5x5 deg and the averaging region is close to the equator
+    # so the error should be relatively small. 
+    nino34 = sst.sel(lat=slice(-5,5), lon=lon_slice).mean(dim=("lat", "lon"))
+
+    # calculate ONI via a 3-month moving mean 
+    oni = nino34.rolling(time=3, center=True).mean("time")
+
+    return oni 
 
 
 def main():
@@ -223,13 +231,20 @@ def main():
         print(f"Preprocessing data for {model}")
         ds = load_data_as_dset(cat, model)
 
+        # replace time coordinate with actual dates 
+        time_coord = pd.date_range("1850-01-01", "2014-12-01", freq="MS")
+        if len(ds.time) != 1980: 
+            print(f"Skipping {model} because its timeseries has length {len(ds.time)}, not expected length of 1980")
+        else:
+            ds = ds.assign_coords(time=time_coord)
+
         # do each ensemble member separately 
-        for member in ds.member_id:
+        for member in ds.member_id.values:
             if check_if_data_exists(model, member): 
                 print(f"Already found downloaded data for {member}. Skipping... \n")
                 continue 
 
-            print(f"Preprocessing ensemble member {member}")
+            print(f"Preprocessing ensemble member {member}. Subsetting...", end="")
             ds_subset = ds.sel(member_id=member)
             
             # subset and regrid
@@ -237,29 +252,44 @@ def main():
 
             sst = regrid(sst, model)
             t300 = regrid(t300, model)
-            
-            # select the domain from 60S to 60N 
+
             sst = add_index_to_lat_lon(sst)
             t300 = add_index_to_lat_lon(t300)
 
+            # select the domain from 60S to 60N 
+            sst = sst.sel(lat=slice(-60, 60))
+            t300 = t300.sel(lat=slice(-60,60))
+
             # calculate ONI index 
+            oni = calculate_ONI(sst)
 
             # now normalize 
-            sst_normalized = (sst - sst.mean("time")) / sst.std("time") 
-            t300_normalized = (t300 - t300.mean("time")) / t300.std("time")
+            sst_normalized = (sst.groupby("time.month") - sst.groupby("time.month").mean("time")) \
+                 / sst.groupby("time.month").std("time")
+            t300_normalized = (t300.groupby("time.month") - t300.groupby("time.month").mean("time")) \
+                 / t300.groupby("time.month").std("time")
+            oni_normalized = (oni.groupby("time.month") - oni.groupby("time.month").mean("time")) \
+                 / oni.groupby("time.month").std("time")
+            print("done!")
 
-            
+            # download, compute everything, and save
+            print("Downloading and regridding... ")
+            start_time = time.time()
+            combined_ds = xr.Dataset({"sst": sst_normalized, "t300": t300_normalized, "oni": oni_normalized})
+            combined_ds = combined_ds.assign_attrs(model_name=model, member_id=member, regrid_method="bilinear")
+
+            save_path = os.path.join(SAVE_DIRECTORY, f"cmip/{model}_{member}_sst_t300.nc")
+            combined_ds.to_netcdf(save_path)
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+
+            print(f"done! (Time elapsed: {elapsed_time:.2f} seconds)\n")
 
         download_progress[model] = True
         with open(download_progress_file_path, 'wb') as file:
             pickle.dump(download_progress, file)
 
-
-    start_time = time.time()
-    end_time = time.time()
-    elapsed_time = end_time - start_time
-
-    print(f"done! (Time taken: {elapsed_time:.2f} seconds)")
+        print(f"\n\n")
 
 
 if __name__ == "__main__":
