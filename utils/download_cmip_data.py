@@ -41,6 +41,9 @@ def get_catalog():
     unique_models.remove('ICON-ESM-LR')
     # skip MCM-UA-1-0 because it has no y index 
     unique_models.remove('MCM-UA-1-0') 
+    # skip AWI models because they are on a uniquely unstructured grid 
+    unique_models.remove('AWI-CM-1-1-MR')
+    unique_models.remove('AWI-ESM-1-1-LR')
 
     return cat, unique_models
 
@@ -64,17 +67,29 @@ def load_data_as_dset(cat, source_id):
 
     cat_subset = cat.search(source_id=source_id)
 
-    z_kwargs = {'consolidated':True, 'decode_times':False}
 
-    with dask.config.set(**{'array.slicing.split_large_chunks': True}):
-        dset_dict = cat_subset.to_dataset_dict(zarr_kwargs=z_kwargs, preprocess=xmip_preprocessing_wrapper)
-    
+    # Note 
+    #
+    # For some reason, the xmip_preprocessing_wrapper function causes issues for some
+    # models, where rename_cmip6 does not seem to be applied correctly. A temporary
+    # workaround is applying the preprocessing function after retrieving it using intake-esm
+
+    try:
+        x_kwargs = {"consolidated": True, "decode_times": True, "use_cftime": True}
+        with dask.config.set(**{'array.slicing.split_large_chunks': True}):
+            dset_dict = cat_subset.to_dataset_dict(xarray_open_kwargs=x_kwargs, preprocess=rename_cmip6)
+    except: 
+        print(f"Error retrieving dset_dict using intake for {source_id}. Skipping...")
+        return None
+
     dset_ids = list(dset_dict.keys())
 
     if len(dset_ids) == 1: 
-        return dset_dict[dset_ids[0]]
+        ds = xmip_preprocessing_wrapper(dset_dict[dset_ids[0]])
+        return ds
     else:
-        raise ValueError(f"Found multiple datasets for the given query:\n{dset_ids}")
+        print(f"Found multiple datasets for the given query:\n{dset_ids} \nSkipping...")
+        return None
 
 
 def subset_data(ds): 
@@ -228,13 +243,29 @@ def main():
         # skip if all ensemble members have already been downloaded 
         if download_progress[model]: continue 
 
+        # check concurrent downloads (if running this on multiple nodes)
+        if "curr_downloads" not in download_progress.keys():
+            download_progress["curr_downloads"] = [model]
+        elif model in download_progress["curr_downloads"]:
+            print(f"another instance of this script is currently downloading {model}. Skipping...")
+            continue
+        else:
+            download_progress["curr_downloads"].append(model)
+
+        # update the download progress file 
+        with open(download_progress_file_path, 'wb') as file:
+            pickle.dump(download_progress, file)
+
         print(f"Preprocessing data for {model}")
         ds = load_data_as_dset(cat, model)
 
-        # replace time coordinate with actual dates 
+        if ds is None: continue 
+
+        # make sure time coordinate is a standardized format 
         time_coord = pd.date_range("1850-01-01", "2014-12-01", freq="MS")
         if len(ds.time) != 1980: 
             print(f"Skipping {model} because its timeseries has length {len(ds.time)}, not expected length of 1980")
+            continue
         else:
             ds = ds.assign_coords(time=time_coord)
 
@@ -264,12 +295,18 @@ def main():
             oni = calculate_ONI(sst)
 
             # now normalize 
-            sst_normalized = (sst.groupby("time.month") - sst.groupby("time.month").mean("time")) \
-                 / sst.groupby("time.month").std("time")
-            t300_normalized = (t300.groupby("time.month") - t300.groupby("time.month").mean("time")) \
-                 / t300.groupby("time.month").std("time")
-            oni_normalized = (oni.groupby("time.month") - oni.groupby("time.month").mean("time")) \
-                 / oni.groupby("time.month").std("time")
+            sst_normalized = sst.groupby("time.month").apply(
+                lambda x: (x - x.mean("time")) / x.std("time")
+            )
+
+            t300_normalized = t300.groupby("time.month").apply(
+                lambda x: (x - x.mean("time")) / x.std("time")
+            )
+
+            oni_normalized = oni.groupby("time.month").apply(
+                lambda x: (x - x.mean("time")) / x.std("time")
+            )
+
             print("done!")
 
             # download, compute everything, and save
@@ -286,6 +323,7 @@ def main():
             print(f"done! (Time elapsed: {elapsed_time:.2f} seconds)\n")
 
         download_progress[model] = True
+        download_progress["curr_downloads"].remove(model)
         with open(download_progress_file_path, 'wb') as file:
             pickle.dump(download_progress, file)
 
