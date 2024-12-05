@@ -8,6 +8,7 @@ from torch_geometric.nn import GCNConv
 from torch_geometric.nn import global_add_pool, global_mean_pool
 
 START = 10 # Start token outside of usual range of ONI scale
+NUM_VARS = 2
 
 # Node embedding network
 # class GCN(torch.nn.Module):
@@ -16,7 +17,7 @@ class GCN(pl.LightningModule):
         hidden_dim, 
         num_layers, 
         dropout,
-        node_dim=4
+        node_dim=NUM_VARS
     ):
 
       super(GCN, self).__init__()
@@ -126,11 +127,11 @@ class GNNRNN(pl.LightningModule):
             labels = self.trainer.datamodule.dataset.get_labels() # N x 24
 
             # flatten, remove remainder after batching, reshape, shuffle
-            flattened_labels =  labels.flatten()
-            flattened_labels = flattened_labels[:self.trainer.datamodule.sampler.num_groups * self.trainer.datamodule.sampler.group_size // 36 * 24] # dropping last batch
-            labels = flattened_labels.reshape(self.trainer.datamodule.sampler.num_groups, self.trainer.datamodule.sampler.group_size // 36 * 24)
-            if self.shuffle_indices is not None:
-                labels = labels[self.shuffle_indices]
+            # flattened_labels =  labels.flatten()
+            # flattened_labels = flattened_labels[:self.trainer.datamodule.sampler.num_groups * self.trainer.datamodule.sampler.group_size // 36 * 24] # dropping last batch
+            # labels = flattened_labels.reshape(self.trainer.datamodule.sampler.num_groups, self.trainer.datamodule.sampler.group_size // 36 * 24)
+            # if self.shuffle_indices is not None:
+            #     labels = labels[self.shuffle_indices]
             self.labels = torch.from_numpy(labels)
 
         inputs = batch.to(self.device)
