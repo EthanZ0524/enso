@@ -1,17 +1,9 @@
-import numpy as np
 import os
 import torch
-import torch.nn as nn
-import torch_geometric
-import torch_geometric.nn
 import pytorch_lightning as pl
 import wandb
-from torch_geometric.nn import GCNConv, global_add_pool, global_mean_pool
-from torch_geometric.data import Data
-from torch_geometric.loader import DataLoader
 from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
-from torch.utils.data import RandomSampler
 from datetime import datetime
 import gc
 import argparse
@@ -19,17 +11,18 @@ import sys
 
 from utils.data_utils import MasterDataModule
 from config import *
-from models.GNNRNN import GNNRNN
+from global_vars import *
+from models.master_model import MasterModel
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Script to train GNNRNN model")
+    parser = argparse.ArgumentParser(description="Script to train models")
     parser.add_argument('--extend', action='store_true', help="Extending a model's training")
-    parser.add_argument('-f', type=str, help="Path to checkpoint file", required=False)
+    parser.add_argument('-c', type=str, help="Path to checkpoint file", required=False)
     parser.add_argument('-e', type=int, help="New number of epochs to train model for", required=False)
     args = parser.parse_args()
 
     if args.extend:
-        if args.f is None:
+        if args.c is None:
             raise ValueError("Error: checkpoint required for extending training")
     if args.e and not args.extend:
         raise ValueError("Error: epochs provided for non-extension training run")
@@ -62,7 +55,7 @@ def main():
     args = parse_args()
     extend = args.extend
     epochs = EPOCHS if not extend else args.e
-    checkpoint_path = None if not extend else args.f
+    checkpoint_path = None if not extend else args.c
     checkpoint_dir = None if not checkpoint_path else os.path.dirname(checkpoint_path) 
     experiment_name = EXPERIMENT_NAME if not extend else f'Extending_to_{epochs}_epochs'
 
@@ -86,12 +79,16 @@ def main():
             name=experiment_name
         )
 
-    model = GNNRNN(graph_emb_dim=GCN_EMB_DIM, 
+    model = MasterModel(graph_emb_dim=GENET_EMB_DIM, 
+            ge_net_layers=GENET_NUM_LAYERS,
+            ge_net_dropout=GENET_DROPOUT,
+            node_embedder=NODE_EMBEDDER,
             enc_hidden_dim=ENC_HIDDEN_DIM, 
+            enc_dropout=ENC_DROPOUT,
+            enc_dec=ENC_DEC,
             output_length=NUM_OUTPUT_MONTHS,
-            gcn_layers=GCN_NUM_LAYERS,
-            gcn_dropout=GCN_DROPOUT,
-            lr=LEARNING_RATE)
+            lr=LEARNING_RATE
+            )
 
     data_module = MasterDataModule(batch_size=NUM_INPUT_MONTHS *  BATCH_SIZE)
 
@@ -101,7 +98,6 @@ def main():
         logger=logger,
         default_root_dir=str(checkpoint_dir),
         accelerator='auto', 
-        devices=1,
         log_every_n_steps=1
     )
 
