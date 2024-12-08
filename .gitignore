@@ -3,3 +3,4 @@
 /logs/
 /lightning_logs/
 /.DS_Store
+/checkpoints/
