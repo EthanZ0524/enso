@@ -265,6 +265,9 @@ def main():
         time_coord = pd.date_range("1850-01-01", "2014-12-01", freq="MS")
         if len(ds.time) != 1980: 
             print(f"Skipping {model} because its timeseries has length {len(ds.time)}, not expected length of 1980")
+            download_progress["curr_downloads"].remove(model)
+            with open(download_progress_file_path, 'wb') as file:
+                pickle.dump(download_progress, file)
             continue
         else:
             ds = ds.assign_coords(time=time_coord)
