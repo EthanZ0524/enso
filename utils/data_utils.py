@@ -238,29 +238,30 @@ class CMIP(Dataset):
         window_indices subarray of the same index. 
     '''
 
+    class CMIP(Dataset):
     def __init__(self, name='CMIP', root=DATA_ROOT, transform=None, adjacency_method='grid'):
         self.name = name
         self.root = root
-        self.urls = ['https://www.dropbox.com/scl/fi/ydthqdfbhibc9hbbelpzj/CMIP_train.nc?rlkey=92kphas2yj5zmnfnb4kffzwtf&st=hg9n0vwd&dl=1', 
-                    'https://www.dropbox.com/scl/fi/gf5riugm3atj47rf3sbvi/CMIP_label.nc?rlkey=u4mtaeel1lpr8vho481l5de7p&st=hluf1xgo&dl=1']   
+        self.urls = ['https://www.dropbox.com/scl/fi/i22s15q6b9c8q205dhe20/CMIP_merged.nc?rlkey=k4qgkaluc1267tlp6y8u3uaoy&st=14yvvnu3&dl=1']   
         self.length = None
         self.labels = None
         self.adjacency_method = adjacency_method
 
+        best_models = get_best_cmip_models(NUM_MODELS)['model_name'].to_numpy()
+        x_unprocessed = xr.open_dataset(f'{self.raw_dir}/CMIP_merged.nc', engine="netcdf4")
+        self.members = [str(sim_id) for sim_id in x_unprocessed['simulation_id'].to_numpy() if sim_id.split(':')[0] in best_models]
+
         # Constructing window_indices, a bookkeeping array for eventual shuffling/batching. 
         # Creates a np.array of np.arrays of 36 graph indices - ensures inter-model shuffling doesn't occur.
 
-        # CMIP6: 15 models, 151 years each --> 151 x 12 graphs
-        cmip6 = [np.array(list(range(i, i + 151 * 12))) for i in range(0, 15 * 151 * 12, 151 * 12)] 
-        cmip5_start = cmip6[-1][-1] + 1
-        # CMIP5: 17 models, 140 years each --> 140 x 12 graphs
-        cmip5 = [np.array(list(range(j, j + 140 * 12))) for j in range(cmip5_start, cmip5_start + 17 * 140 * 12, 140 * 12)]
-        combined = cmip6 + cmip5
-
+        # self.members models, 1980 - 25 graphs each
         window_indices = []
-        for sublist in combined:
+        lists = [np.array(list(range(i, i + 1980 - 25))) for i in range(0, len(self.members) * (1980 - 25), 1980 - 25)]
+
+        for sublist in lists:
             window_indices.extend(np.array([sublist[i:i+NUM_INPUT_MONTHS] for i in range(len(sublist) - NUM_INPUT_MONTHS + 1)]))
         self.window_indices = np.array(window_indices) 
+
         super().__init__(root, transform)
         
     @property
@@ -273,43 +274,21 @@ class CMIP(Dataset):
 
     @property
     def raw_file_names(self):
-        return ['CMIP_train.nc', 'CMIP_label.nc']
+        return ['CMIP_merged.nc']
 
     def download(self) -> None:
         for filename, url in zip(self.raw_file_names, self.urls):
             download_url(url, f'{self.raw_dir}')
 
     def len(self):
-        if self.length is None:
-            years = len(xr.open_dataset(f'{self.raw_dir}/CMIP_train.nc', engine="netcdf4").year.values)
-            self.length = 12 * years
-        return self.length
+        return len(self.members) * (1980 - 25)
     
     def get_labels(self):
         if self.labels is None:
-            labels_unprocessed = xr.open_dataset(f'{self.raw_dir}/CMIP_label.nc', engine="netcdf4")['nino'].to_numpy() # 4464 x 36
-
-            cmip6 = labels_unprocessed[:2265]
-            cmip5 = labels_unprocessed[2265:]
-
-            cmip6 = np.reshape(cmip6, (15, 151, 36))
-            cmip5 = np.reshape(cmip5, (17, 140, 36))
-
-            final = []
-
-            for model in cmip6: # each 151 x 36 array
-                model = model[:, -12:].flatten() # (151 x 12)-element array. First point corresponds to 26th month, want 37th 
-                model = model[11:-1] # a very long array...
-                model_inputs = np.array([model[i:i+NUM_OUTPUT_MONTHS] for i in range(len(model) - NUM_OUTPUT_MONTHS + 1)])
-                final.append(model_inputs) # x * 24
-
-            for model in cmip5:
-                model = model[:, -12:].flatten() # (140 x 12)-element array. First point corresponds to 26th month, want 37th 
-                model = model[11:-1] 
-                model_inputs = np.array([model[i:i+NUM_OUTPUT_MONTHS] for i in range(len(model) - NUM_OUTPUT_MONTHS + 1)])
-                final.append(model_inputs) # x * 24
-
-            self.labels = np.concatenate(final)
+            labels_unprocessed = xr.open_dataset(f'{self.raw_dir}/CMIP_merged.nc', engine="netcdf4").sel(simulation_id=self.members)['oni'].to_numpy() # self.members x 1980
+            labels_unprocessed = labels_unprocessed[:, 24:-1]
+            labels_unprocessed = labels_unprocessed.flatten()
+            self.labels = labels_unprocessed[self.window_indices[:, 12:]]
         return self.labels
 
     @property
@@ -317,38 +296,41 @@ class CMIP(Dataset):
         return [f'{i}.pt' for i in range(self.len())]
         
     def process(self):
-        x_unprocessed = xr.open_dataset(f'{self.raw_dir}/CMIP_train.nc', engine="netcdf4")
+        members = self.members
         adj_t = construct_adjacency_list(method=self.adjacency_method)
-        
-        for i in tqdm(range(self.len())):
-            year = i // 12
-            month = i % 12
-            temp = [x_unprocessed[var].isel(year=year, month=month).to_numpy() for var in VAR_NAMES] # list of 24 (lat) x 72 (lon) arrays
-            lats = x_unprocessed['lat'].to_numpy() # 24
-            lats_features = np.repeat(np.sin(np.radians(lats))[:, np.newaxis], 72, axis=1)
-            temp.append(lats_features)
-            lons = x_unprocessed['lon'].to_numpy() # 72
-            lons_features = np.repeat(np.sin(np.radians(lons))[:, np.newaxis], 24, axis=1).T
-            temp.append(lons_features)
+        idx = 0
+        x_unprocessed = xr.open_dataset(f'{self.raw_dir}/CMIP_merged.nc', engine="netcdf4")
 
-            temp = np.stack(temp, axis=0) # 4 x 24 (lat) x 72 (lon)
-            x = temp.transpose(1, 2, 0).reshape(-1, 4) # (24 x 72) x 2. Caution: stacks 72's on top of each other, not 24's!
+        for member in tqdm(members):
+            member_data = x_unprocessed.sel(simulation_id=member)
+            for time in range(len(x_unprocessed.time.values) - 24 - 1): # off-by-one because last label is NaN
+                temp = [member_data[var].isel(time=time).to_numpy() for var in VAR_NAMES] # list of 24 (lat) x 72 (lon) arrays
+                lats = member_data['lat'].to_numpy() # 24
+                lats_features = np.repeat(np.sin(np.radians(lats))[:, np.newaxis], 72, axis=1)
+                temp.append(lats_features)
+                lons = member_data['lon'].to_numpy() # 72
+                lons_features = np.repeat(np.sin(np.radians(lons))[:, np.newaxis], 24, axis=1).T
+                temp.append(lons_features)
 
-            # Removing NaNs (terrestial nodes)
-            valid_nodes = ~np.isnan(x).any(axis=1) # (24x72) bool array
-            filtered_x = x[valid_nodes]
+                temp = np.stack(temp, axis=0) # 4 x 24 (lat) x 72 (lon)
+                x = temp.transpose(1, 2, 0).reshape(-1, 4) # (24 x 72) x 2. Caution: stacks 72's on top of each other, not 24's!
 
-            valid_indices = np.where(valid_nodes)[0] # array w/ indices of valid nodes 
-            index_mapping = -np.ones(x.shape[0], dtype=int)  
-            index_mapping[valid_indices] = np.arange(len(valid_indices))  # (24x72) array, -1 if node contains NaN, new numbering for valid nodes
-            # original index goes in, new index or -1 comes out
+                # Removing NaNs (terrestial nodes)
+                valid_nodes = ~np.isnan(x).any(axis=1) # (24x72) bool array
+                filtered_x = x[valid_nodes]
 
-            filtered_edges = (index_mapping[adj_t[0]] != -1) & (index_mapping[adj_t[1]] != -1)
-            filtered_adj_t = index_mapping[adj_t[:, filtered_edges]]
+                valid_indices = np.where(valid_nodes)[0] # array w/ indices of valid nodes 
+                index_mapping = -np.ones(x.shape[0], dtype=int)  
+                index_mapping[valid_indices] = np.arange(len(valid_indices))  # (24x72) array, -1 if node contains NaN, new numbering for valid nodes
+                # original index goes in, new index or -1 comes out
 
-            # Creating graph from x:
-            g = Data(x = torch.tensor(filtered_x, dtype=torch.float32), edge_index=torch.tensor(filtered_adj_t, dtype=torch.int64))
-            torch.save(g, f'{self.processed_dir}/{i}.pt')
+                filtered_edges = (index_mapping[adj_t[0]] != -1) & (index_mapping[adj_t[1]] != -1)
+                filtered_adj_t = index_mapping[adj_t[:, filtered_edges]]
+
+                # Creating graph from x:
+                g = Data(x = torch.tensor(filtered_x, dtype=torch.float32), edge_index=torch.tensor(filtered_adj_t, dtype=torch.int64))
+                torch.save(g, f'{self.processed_dir}/{idx}.pt')
+                idx += 1
     
     def get(self, idx):
         g = torch.load(osp.join(self.processed_dir, f'{idx}.pt'))
