@@ -29,19 +29,19 @@ def get_allocated_cpus():
 
 NUM_WORKERS = min(get_allocated_cpus() - 1, 0)
 
-"""
-Helper function: generates the adjacency list for a 24x72 grid of nodes.
-
-Params:
-    method (str): method to use for constructing adjacency list. The following options are available:
-        "grid": trivial connection of each node to its 4 up-down-left-right neighbors, if they exist
-        "mesh1": to be implemented
-        "mesh2": to be implemented
-
-Returns:
-    np.array: adjacency list of shape (2, num_edges) 
-"""
 def construct_adjacency_list(method="grid"):
+    """
+    Helper function: generates the adjacency list for a 24x72 grid of nodes.
+
+    Params:
+        method (str): method to use for constructing adjacency list. The following options are available:
+            "grid": trivial connection of each node to its 4 up-down-left-right neighbors, if they exist
+            "mesh1": to be implemented
+            "mesh2": to be implemented
+
+    Returns:
+        np.array: adjacency list of shape (2, num_edges) 
+    """
     rows, cols = 24, 72
     adjacency_list = []
 
@@ -49,22 +49,43 @@ def construct_adjacency_list(method="grid"):
         for i in range(rows):
             for j in range(cols):
                 current_index = i * cols + j
-
-                if i > 0: # row above
+                # Row above
+                if i > 0: 
                     above_index = (i - 1) * cols + j
                     adjacency_list.append((current_index, above_index))
 
-                if i < rows - 1: # row below
+                # Row below
+                if i < rows - 1: 
                     below_index = (i + 1) * cols + j
                     adjacency_list.append((current_index, below_index))
 
-                if j > 0: # col left
-                    left_index = i * cols + (j - 1)
-                    adjacency_list.append((current_index, left_index))
+                # Column left (wrap around for periodic boundary)
+                left_index = i * cols + (j - 1) % cols
+                adjacency_list.append((current_index, left_index))
 
-                if j < cols - 1: # col right
-                    right_index = i * cols + (j + 1)
-                    adjacency_list.append((current_index, right_index))
+                # Column right (wrap around for periodic boundary)
+                right_index = i * cols + (j + 1) % cols
+                adjacency_list.append((current_index, right_index))
+
+    elif method == "dense_grid":
+        for i in range(rows):
+            for j in range(cols):
+                current_index = i * cols + j
+
+                # Loop over all neighbors (including diagonals)
+                for di in [-1, 0, 1]:
+                    for dj in [-1, 0, 1]:
+                        if di == 0 and dj == 0:
+                            continue  # Skip the current node
+
+                        neighbor_row = i + di
+                        neighbor_col = (j + dj) % cols  # Periodic in east-west direction
+
+                        # Check if neighbor is within bounds in the north-south direction
+                        if 0 <= neighbor_row < rows:
+                            neighbor_index = neighbor_row * cols + neighbor_col
+                            adjacency_list.append((current_index, neighbor_index))
+
 
     adj_t = np.array(adjacency_list).T
     return adj_t
