@@ -84,7 +84,6 @@ def main():
             ge_net_dropout=GENET_DROPOUT,
             node_embedder=NODE_EMBEDDER,
             enc_hidden_dim=ENC_HIDDEN_DIM, 
-            enc_dropout=ENC_DROPOUT,
             enc_dec=ENC_DEC,
             output_length=NUM_OUTPUT_MONTHS,
             lr=LEARNING_RATE
