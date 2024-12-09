@@ -16,13 +16,13 @@ from models.master_model import MasterModel
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Script to train models")
-    parser.add_argument('--extend', action='store_true', help="Extending a model's training")
-    parser.add_argument('-c', type=str, help="Path to checkpoint file", required=False)
+    parser.add_argument('--extend', action='store_true', help="Extending/continuing a model's training")
+    parser.add_argument('-f', type=str, help="Path to checkpoint file", required=False)
     parser.add_argument('-e', type=int, help="New number of epochs to train model for", required=False)
     args = parser.parse_args()
 
     if args.extend:
-        if args.c is None:
+        if args.f is None:
             raise ValueError("Error: checkpoint required for extending training")
     if args.e and not args.extend:
         raise ValueError("Error: epochs provided for non-extension training run")
@@ -55,7 +55,7 @@ def main():
     args = parse_args()
     extend = args.extend
     epochs = EPOCHS if not extend else args.e
-    checkpoint_path = None if not extend else args.c
+    checkpoint_path = None if not extend else args.f
     checkpoint_dir = None if not checkpoint_path else os.path.dirname(checkpoint_path) 
     experiment_name = EXPERIMENT_NAME if not extend else f'Extending_to_{epochs}_epochs'
 
