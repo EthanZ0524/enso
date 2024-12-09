@@ -147,8 +147,16 @@ class SODA(Dataset):
 
     # Helper function: given a year and month, save the graph as f'm{idx}.pt'
     def save_graph(self, x_unprocessed, adj_t, year, month, idx): 
-        temp = np.array([x_unprocessed[var].isel(year=year, month=month).to_numpy() for var in VAR_NAMES]) # 2 (var) x 24 (lat) x 72 (lon)
-        x = np.transpose(temp, (1, 2, 0)).reshape(-1, 2) # (24 x 72) x 2. Caution: stacks 72's on top of each other, not 24's!
+        temp = [x_unprocessed[var].isel(year=year, month=month).to_numpy() for var in VAR_NAMES] # list of 24 (lat) x 72 (lon) arrays
+        lats = x_unprocessed['lat'].to_numpy() # 24
+        lats_features = np.repeat(np.sin(np.radians(lats))[:, np.newaxis], 72, axis=1)
+        temp.append(lats_features)
+        lons = x_unprocessed['lon'].to_numpy() # 72
+        lons_features = np.repeat(np.sin(np.radians(lons))[:, np.newaxis], 24, axis=1).T
+        temp.append(lons_features)
+
+        temp = np.stack(temp, axis=0) # 4 x 24 (lat) x 72 (lon)
+        x = temp.transpose(1, 2, 0).reshape(-1, 4) # (24 x 72) x 4.
 
         # Removing NaNs (terrestial nodes)
         valid_nodes = ~np.isnan(x).any(axis=1) # (24x72) bool array
