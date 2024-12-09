@@ -162,7 +162,6 @@ class MasterModel(pl.LightningModule):
         ge_net_dropout, 
         node_embedder: str, # GAT, GCN, etc.
         enc_hidden_dim, 
-        enc_dropout,
         enc_dec: str, # LSTM, RNN, etc.
         output_length, 
         lr
@@ -192,7 +191,6 @@ class MasterModel(pl.LightningModule):
 
         self.encoder = encoder_type(input_size=graph_emb_dim, 
             hidden_size=enc_hidden_dim,
-            dropout=enc_dropout, 
             batch_first=True, 
             bidirectional=True)
 
