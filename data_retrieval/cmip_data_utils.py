@@ -6,11 +6,11 @@ import xarray as xr
 import numpy as np 
 import pandas as pd 
 import os
-import config 
+import data_retrieval.data_config as data_config
 
 # change as necessary
-enso_stats_path = os.path.join(config.DATA_DIR, "ENSO_performance_CMIP_normalized.csv")
-cmip_merged = xr.open_dataset(os.path.join(config.DATA_DIR, "merged_data/CMIP_merged.nc"))
+enso_stats_path = os.path.join(data_config.DATA_DIR, "ENSO_performance_CMIP_normalized.csv")
+cmip_merged = xr.open_dataset(os.path.join(data_config.DATA_DIR, "merged_data/CMIP_merged.nc"))
 
 
 def get_model_names_dict(cmip_ds):

@@ -3,7 +3,7 @@ import numpy as np
 import os
 import sys
 
-from config import DATA_DIR
+from data_retrieval.data_config import DATA_DIR
 
 
 save_dir = os.path.join(DATA_DIR, "merged_data")
