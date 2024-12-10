@@ -20,7 +20,8 @@ from global_vars import *
 
 from data_retrieval.cmip_data_utils import get_best_cmip_models
 
-DATA_ROOT = subprocess.check_output(['git', 'rev-parse', '--show-toplevel']).strip().decode('utf-8') + '/data'
+from data_retrieval.data_config import DATA_DIR 
+
 VAR_NAMES = ['sst', 't300'] # hardcoded, sorry...
 
 def get_allocated_cpus():
@@ -52,8 +53,7 @@ def get_neighbors(base_rows, base_cols, i, j, method, scale=1):
     return neighbors
 
 
-
-def construct_adjacency_list(grid_size, method="grid", scales=None, origins=None, verbose=False):
+def construct_adjacency_list_core(grid_size, method="grid", scales=None, origins=None, verbose=False):
     """
     Helper function: generates the adjacency list for a 24x72 grid of nodes.
 
@@ -97,6 +97,26 @@ def construct_adjacency_list(grid_size, method="grid", scales=None, origins=None
     return adj_t
 
 
+def construct_adjacency_list(method):
+    """ 
+    Wrapper function for constructing adjacency list with some presets
+    """
+    grid_size = (24, 72)
+
+    if method == "simple_grid": 
+        return construct_adjacency_list_core(grid_size, method="grid", scales=[1], origins=[(0,0)])
+    
+    elif method == "simple_grid_dense":
+        return construct_adjacency_list_core(grid_size, method="dense_grid", scales=[1], origins=[(0,0)])
+
+    elif method == "multimesh1":
+        return construct_adjacency_list_core(grid_size, method="dense_grid", 
+                                            scales=[1, 3, 6], origins=[(0,0), (1,1), (4,1)])
+    
+    else:
+        raise NotImplementedError(f"That adjacency method has not been implemented!\
+             Current settings: simple_grid, simple_grid_dense, multimesh1 ")
+
 class SODA(Dataset):
     '''
     OVERVIEW:
@@ -121,7 +141,7 @@ class SODA(Dataset):
         labels is an array of arrays, where each subarray contains a 24-month label (ONI) sequence corresponding to the 
         window_indices subarray of the same index. 
     '''
-    def __init__(self, name='SODA', root=DATA_ROOT, transform=None, adjacency_method='grid'):
+    def __init__(self, name='SODA', root=DATA_DIR, transform=None, adjacency_method='grid'):
         self.name = name
         self.root = root
         self.urls = ['https://www.dropbox.com/scl/fi/iqsidx76nexabhqv7eygz/SODA.nc?rlkey=bho72gwfiug3yompoevadx348&st=n3nvbcwf&dl=1']   
@@ -233,7 +253,7 @@ class CMIP(Dataset):
         labels is another array of arrays, where each subarray contains a 24-month label (ONI) sequence corresponding to the 
         window_indices subarray of the same index. 
     '''
-    def __init__(self, name='CMIP', root=DATA_ROOT, transform=None, adjacency_method='grid'):
+    def __init__(self, name='CMIP', root=DATA_DIR, transform=None, adjacency_method='grid'):
         self.name = name
         self.root = root
         self.urls = ['https://www.dropbox.com/scl/fi/i22s15q6b9c8q205dhe20/CMIP_merged.nc?rlkey=k4qgkaluc1267tlp6y8u3uaoy&st=14yvvnu3&dl=1']   
@@ -341,7 +361,7 @@ class GODAS(Dataset):
         Because we never train on GODAS, we don't need window_indices or labels class
         variables. The dataset is small enough that we can directly load labels in predict_plot.ipynb 
     '''
-    def __init__(self, name='GODAS', root=DATA_ROOT, transform=None, adjacency_method='grid'):
+    def __init__(self, name='GODAS', root=DATA_DIR, transform=None, adjacency_method='grid'):
         self.name = name
         self.root = root
         self.urls = ['https://www.dropbox.com/scl/fi/uzlgv1khwiz9rwb1ipbsc/GODAS.nc?rlkey=14iwz99wzhdqd7ml3tdrwe660&st=nd5gpgaf&dl=1']
@@ -451,14 +471,15 @@ class MasterDataModule(pl.LightningDataModule):
         self.dataset = None
         self.sampler = None
         self.finetune = finetune
+        self.adjacency = adjacency
 
     def setup(self, stage=None):
         if stage == "fit":
             if not self.finetune:
-                self.dataset = CMIP(adjacency_method=adjacency) 
+                self.dataset = CMIP(adjacency_method=self.adjacency) 
                 self.sampler = SGS(self.dataset, group_size=self.batch_size, shuffle=True)
             else:
-                self.dataset = SODA(adjacency_method=adjacency)
+                self.dataset = SODA(adjacency_method=self.adjacency)
                 self.sampler = SGS(self.dataset, group_size=self.batch_size, shuffle=True)
             
     def train_dataloader(self):
