@@ -17,24 +17,26 @@ pip install -r requirements.txt
 ### Usage
 Run the following to train the GNNRNN.
 ```sh
-python GNNRNN_train.py
+python GNNRNN_train.py [options]
 ```
-To extend training starting from a given checkpoint, run the following:
-```sh
-python GNNRNN_train.py --extend -e {new num epochs} -f {path to checkpoint}
-```
+
+| Flag/Option      | Description                                               | Default Value   |
+|------------------|-----------------------------------------------------------------|-----------------|
+| `--extend`       | If a training run is an extension of a previous run             | False           |
+| `--finetune`     | If a training run is finetuning a previous model                | False           |
+| `-f`             | Filepath to model checkpoint (required for extend and finetune) | None            |
+| `--help`         | Show help message and exit                                      | -               |
+
 
 Edit ./config.py to set model parameters accordingly. Model weights of the top model (lowest training losses) per epoch, in addition to the last model, will be saved into the automatically-created ./checkpoints directory.
 
 ### To-do's:
 - Python-ize and train GNNRNN (DONE)
-- Implement SODA and GODAS PyG Dataset classes (SODA DONE)
+- Implement SODA and GODAS PyG Dataset classes (DONE)
 - Clean up/sanity check CMIP PyG Dataset class (DONE)
-- Write regridding code for general CMIP data (Yuchen)
+- Write regridding code for general CMIP data (DONE)
 - Implement multi-GPU training (Saahil)
 - Feature engineering (position, etc.)
-- Write evaluation/model comparison code (kind of done)
-- Implement validation dataloader/loss stuff (probably need a LightningDataModule implementation)
+- Write evaluation/model comparison code (DONE)
 - Create better adjacency matrices (Yuchen)
-- Fix ONI index in downloaded cmip6 data (Yuchen) 
 
