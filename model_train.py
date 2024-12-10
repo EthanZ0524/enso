@@ -8,6 +8,8 @@ from datetime import datetime
 import gc
 import argparse
 import sys
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning, message=".*torch.load.*weights_only=False.*")
 
 from utils.data_utils import MasterDataModule
 from config import *
@@ -17,13 +19,14 @@ from models.master_model import MasterModel
 def parse_args():
     parser = argparse.ArgumentParser(description="Script to train models")
     parser.add_argument('--extend', action='store_true', help="Extending/continuing a model's training")
+    parser.add_argument('--finetune', action='store_true', help="Finetune a pretrained model")
     parser.add_argument('-f', type=str, help="Path to checkpoint file", required=False)
     parser.add_argument('-e', type=int, help="New number of epochs to train model for", required=False)
     args = parser.parse_args()
 
-    if args.extend:
+    if args.extend or args.finetune:
         if args.f is None:
-            raise ValueError("Error: checkpoint required for extending training")
+            raise ValueError("Error: checkpoint required for extending training/finetuning")
     if args.e and not args.extend:
         raise ValueError("Error: epochs provided for non-extension training run")
     
@@ -54,13 +57,29 @@ def main():
 
     args = parse_args()
     extend = args.extend
-    epochs = EPOCHS if not extend else args.e
-    checkpoint_path = None if not extend else args.f
-    checkpoint_dir = None if not checkpoint_path else os.path.dirname(checkpoint_path) 
-    experiment_name = EXPERIMENT_NAME if not extend else f'Extending_to_{epochs}_epochs'
+    finetune = args.finetune            
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    if extend:
+        epochs = args.e
+        checkpoint_path = args.f
+        checkpoint_dir = os.path.dirname(checkpoint_path) # NEED TO FIX: this should also be the case when BOTH ft and extend
+        learning_rate = LEARNING_RATE
+        batch_size = BATCH_SIZE
+        experiment_name = None
+    elif finetune:
+        epochs = FT_EPOCHS
+        checkpoint_path = args.f
+        experiment_name = f'{os.path.basename(os.path.dirname(checkpoint_path))}_finetune_{FT_EXPERIMENT_NAME}'
+        learning_rate = FT_LEARNING_RATE
+        batch_size = FT_BATCH_SIZE
+    else: 
+        epochs = EPOCHS
+        experiment_name = EXPERIMENT_NAME
+        learning_rate = LEARNING_RATE
+        batch_size = BATCH_SIZE
 
     if not extend:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         # Setting up training directories
         checkpoint_dir, logs_dir = setup_training_dirs(experiment_name, timestamp=timestamp)
 
@@ -74,22 +93,25 @@ def main():
     )
     
     logger = WandbLogger(
-            # save_dir=str(logs_dir),
-            save_dir='./logs', # bad
+            save_dir='./logs',
             name=experiment_name
         )
 
-    model = MasterModel(graph_emb_dim=GENET_EMB_DIM, 
-            ge_net_layers=GENET_NUM_LAYERS,
-            ge_net_dropout=GENET_DROPOUT,
-            node_embedder=NODE_EMBEDDER,
-            enc_hidden_dim=ENC_HIDDEN_DIM, 
-            enc_dec=ENC_DEC,
-            output_length=NUM_OUTPUT_MONTHS,
-            lr=LEARNING_RATE
+    if finetune:
+        model = MasterModel.load_from_checkpoint(checkpoint_path) # this loads weights but the training starts fresh.
+
+    else:
+        model = MasterModel(graph_emb_dim=GENET_EMB_DIM, 
+                ge_net_layers=GENET_NUM_LAYERS,
+                ge_net_dropout=GENET_DROPOUT,
+                node_embedder=NODE_EMBEDDER,
+                enc_hidden_dim=ENC_HIDDEN_DIM, 
+                enc_dec=ENC_DEC,
+                output_length=NUM_OUTPUT_MONTHS,
+                lr=learning_rate
             )
 
-    data_module = MasterDataModule(batch_size=NUM_INPUT_MONTHS *  BATCH_SIZE)
+    data_module = MasterDataModule(batch_size=NUM_INPUT_MONTHS *  batch_size, finetune=finetune)
 
     trainer = pl.Trainer(
         max_epochs=epochs,
@@ -100,7 +122,11 @@ def main():
         log_every_n_steps=1
     )
 
-    trainer.fit(model, datamodule=data_module, ckpt_path=checkpoint_path)
+    if extend:
+        trainer.fit(model, datamodule=data_module, ckpt_path=checkpoint_path) # for extending training (keeping old epoch #, etc.)
+
+    else:
+        trainer.fit(model, datamodule=data_module)
 
 
 if __name__ == "__main__":

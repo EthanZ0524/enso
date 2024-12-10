@@ -3,7 +3,7 @@ import requests
 import xarray as xr
 import numpy as np 
 import xesmf as xe
-import config
+import data_retrieval.data_config as data_config
 
 def download_SODA_data(base_url, start_year, end_year, spatial_dims, output_dir):
     """
@@ -214,7 +214,7 @@ def preprocess_SODA_data(save_dir, start_year, end_year):
     sst_list = []
     t300_list = []
     for year in range(start_year, end_year+1):
-        ds = xr.open_dataset(f"{config.DATA_DIR}/reanalysis/soda/SODA_thetao_upper300m_{year}.nc")
+        ds = xr.open_dataset(f"{data_config.DATA_DIR}/reanalysis/soda/SODA_thetao_upper300m_{year}.nc")
         da = ds["temp"]
 
         # rename the coordinates to standard lev/lat/lon
@@ -277,7 +277,7 @@ def preprocess_GODAS_data(save_dir, start_year, end_year):
     sst_list = []
     t300_list = []
     for year in range(start_year, end_year+1):
-        ds = xr.open_dataset(f"{config.DATA_DIR}/reanalysis/godas/GODAS_thetao_{year}.nc")
+        ds = xr.open_dataset(f"{data_config.DATA_DIR}/reanalysis/godas/GODAS_thetao_{year}.nc")
         da = ds["pottmp"]
 
         # rename the coordinates to standard lev/lat/lon
@@ -331,7 +331,7 @@ def preprocess_GODAS_data(save_dir, start_year, end_year):
 def main():
     print("Downloading SODA data...")
     # Specify the output directory
-    soda_output_dir = f"{config.DATA_DIR}/reanalysis/soda"
+    soda_output_dir = f"{data_config.DATA_DIR}/reanalysis/soda"
     soda_base_url = "https://apdrc.soest.hawaii.edu/erddap/griddap/hawaii_soest_c71f_e12b_37f8.nc?temp"
     spatial_dims = "[(5.01):1:(350)][(-60):1:(60)][(0.25):1:(359.75)]"
 
@@ -342,13 +342,13 @@ def main():
     download_SODA_data(soda_base_url, start_year, end_year, spatial_dims, soda_output_dir)
     
     print("Regridding and saving SODA data...")
-    soda_regridded_dir = f"{config.DATA_DIR}/reanalysis/soda/regridded"
+    soda_regridded_dir = f"{data_config.DATA_DIR}/reanalysis/soda/regridded"
     preprocess_SODA_data(soda_regridded_dir, start_year, end_year) 
 
 
 
     print("Downloading GODAS data...")
-    godas_output_dir = f"{config.DATA_DIR}/reanalysis/godas"
+    godas_output_dir = f"{data_config.DATA_DIR}/reanalysis/godas"
     godas_base_url = "https://psl.noaa.gov/thredds/fileServer/Datasets/godas/pottmp"
     
     # GODAS time span 
@@ -358,7 +358,7 @@ def main():
     download_GODAS_data(godas_base_url, start_year, end_year, godas_output_dir)
 
     print("Regridding and saving GODAS data...")
-    godas_regridded_dir = f"{config.DATA_DIR}/reanalysis/godas/regridded"
+    godas_regridded_dir = f"{data_config.DATA_DIR}/reanalysis/godas/regridded"
     preprocess_GODAS_data(godas_regridded_dir, start_year, end_year) 
 
 
