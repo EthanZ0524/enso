@@ -1,5 +1,6 @@
-from data_utils import get_neighbors
-from data_utils import construct_adjacency_list
+from utils.data_utils import get_neighbors
+from utils.data_utils import construct_adjacency_list_core
+import numpy as np 
 
 def test_get_neighbors():
     rows, cols = 24, 72
@@ -21,7 +22,7 @@ def test_scale_4_grid():
     scales = [4]
     origins = [(0, 0)]
 
-    adjacency_list = construct_adjacency_list(grid_size=(24,72), method="grid", scales=scales, origins=origins)
+    adjacency_list = construct_adjacency_list_core(grid_size=(24,72), method="grid", scales=scales, origins=origins)
 
     # Check edges for node (0,0)
     node_0 = 0
@@ -44,9 +45,30 @@ def test_scale_4_grid():
 
     print("All tests passed for scale 4 grid!")
 
+def test_union_over_scales():
+    adjacency_list_a = construct_adjacency_list_core(grid_size=(24,72), method="grid", scales=[1], origins=[(0,0)])
+    adjacency_list_b = construct_adjacency_list_core(grid_size=(24,72), method="grid", scales=[3], origins=[(1,1)])
+
+    adjacency_list_ab = construct_adjacency_list_core(grid_size=(24,72), method="grid", scales=[1, 3], origins=[(0,0), (1,1)])
+    
+    adjacency_list_concat = np.concatenate([adjacency_list_a, adjacency_list_b], axis=1)
+
+    normalized_concat = np.sort(adjacency_list_concat, axis=0)  # Shape (2, N+M)
+    normalized_ab = np.sort(adjacency_list_ab, axis=0)          # Shape (2, N+M)
+
+    set_concat = set(map(tuple, normalized_concat.T))
+    set_ab = set(map(tuple, normalized_ab.T))
+
+    # Check if they are the same
+    assert set_concat == set_ab
+
+    print("All tests passed for union over adjacency lists at two scales!")
+
+
 def main():
     test_get_neighbors()
     test_scale_4_grid()
+    test_union_over_scales()
 
 if __name__ == "__main__":
     main()
