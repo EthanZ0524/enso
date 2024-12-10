@@ -17,7 +17,7 @@ pip install -r requirements.txt
 ### Usage
 Run the following to train the GNNRNN.
 ```sh
-python GNNRNN_train.py [options]
+python model_train.py [options]
 ```
 
 | Flag/Option      | Description                                               | Default Value   |
