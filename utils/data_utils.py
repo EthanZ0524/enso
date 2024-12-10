@@ -18,6 +18,8 @@ from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
 import pytorch_lightning as pl
 from global_vars import *
 
+from data_retrieval.cmip_data_utils import get_best_cmip_models
+
 DATA_ROOT = subprocess.check_output(['git', 'rev-parse', '--show-toplevel']).strip().decode('utf-8') + '/data'
 VAR_NAMES = ['sst', 't300'] # hardcoded, sorry...
 
@@ -93,14 +95,13 @@ def construct_adjacency_list(method="grid"):
 class SODA(Dataset):
     '''
     OVERVIEW:
-        PyG Dataset class to load in SODA dataset created by authors of https://spj.science.org/doi/10.34133/olar.0012
+        PyG Dataset class to load in SODA dataset.
 
-        This dataset contains graphs for months 0 - m and labels for months 1 - m+1. A 'row' in the dataset corresponds to 
-        36 graphs (months n - n+35) and 36 labels (months n+1 - n+36). Each row overlaps the previous by 12 months.
+        This dataset contains graphs and labels for 1236 months. 
 
-        We save the first 12 months (graphs) from each year to create a graph timeseries. This leaves us with 24 months of 
-        labels extending past our latest graph (technically 25, but I just ignore the off-by-one). We do this because 
-        labels must exist 24 months further than graphs.
+        We save all but the last 25 graphs to create a graph timeseries. This leaves us with 25 months of 
+        labels extending past our latest graph. We do this because labels must exist 24 months further than graphs;
+        the last label is a NaN so we discard it.
 
         Graph file names are 0-indexed.
 
@@ -118,90 +119,82 @@ class SODA(Dataset):
     def __init__(self, name='SODA', root=DATA_ROOT, transform=None, adjacency_method='grid'):
         self.name = name
         self.root = root
-        self.urls = ['https://www.dropbox.com/scl/fi/cj9ohivhppqe4u2njn0v7/SODA_train.nc?rlkey=ur7i69js5oejrxgdv8m73r2y4&st=vt4lt2na&dl=1', 
-                    'https://www.dropbox.com/scl/fi/9exxnozz8195i4rp2ifac/SODA_label.nc?rlkey=su7x1rnq3ndzwc5yhi53jg74q&st=oeacxlo5&dl=1']
-        self.length = None
+        self.urls = ['https://www.dropbox.com/scl/fi/iqsidx76nexabhqv7eygz/SODA.nc?rlkey=bho72gwfiug3yompoevadx348&st=n3nvbcwf&dl=1']   
         self.labels = None
-        
-        model_indices = np.array([np.arange(self.len())])
-        window_indices = []
-        for sublist in model_indices:
-            window_indices.extend([sublist[i:i+NUM_INPUT_MONTHS] for i in range(len(sublist) - NUM_INPUT_MONTHS + 1)])
-        self.window_indices = np.array(window_indices)
-
         self.adjacency_method = adjacency_method
+
+        # Constructing window_indices, a bookkeeping array for eventual shuffling/batching. 
+        # Creates a np.array of np.arrays of 36 graph indices
+
+        window_indices = []
+        index_list = np.array(list(range(0, self.len())))
+        window_indices.extend(np.array([index_list[i:i+NUM_INPUT_MONTHS] for i in range(len(index_list) - NUM_INPUT_MONTHS + 1)]))
+        self.window_indices = np.array(window_indices) 
+
         super().__init__(root, transform)
         
     @property
     def raw_dir(self) -> str:
         return osp.join(self.root, self.name, 'raw')
-
+    
     @property
     def processed_dir(self) -> str:
         return osp.join(self.root, self.name, f'{self.adjacency_method}_processed')
 
     @property
     def raw_file_names(self):
-        return ['SODA_train.nc', 'SODA_label.nc']
+        return ['SODA.nc']
 
     def download(self) -> None:
         for filename, url in zip(self.raw_file_names, self.urls):
             download_url(url, f'{self.raw_dir}')
 
     def len(self):
-        if self.length is None:
-            years = len(xr.open_dataset(f'{self.raw_dir}/SODA_train.nc', engine="netcdf4").year.values)
-            self.length = 12 * years
-        return self.length
+        num_graphs = len(xr.open_dataset(f'{self.raw_dir}/SODA.nc', engine="netcdf4").time.values)
+        return num_graphs - 24 - 1
 
     def get_labels(self):
         if self.labels is None:
-            labels_unprocessed = xr.open_dataset(f'{self.raw_dir}/SODA_label.nc', engine="netcdf4")['nino'].to_numpy() # 100 x 36
-            labels_unprocessed = labels_unprocessed[:, -12:].flatten() # (100 x 12)-element array. First point corresponds to 26th month, want 37th 
-            labels_unprocessed = labels_unprocessed[11:-1] # off-by-one on the dataset. Thanks...
-            self.labels = np.array([labels_unprocessed[i:i+NUM_OUTPUT_MONTHS] for i in range(len(labels_unprocessed) - NUM_OUTPUT_MONTHS + 1)])
-        return self.labels 
-    
+            labels_unprocessed = xr.open_dataset(f'{self.raw_dir}/SODA.nc', engine="netcdf4")['oni'].to_numpy() # 1236
+            labels_unprocessed = labels_unprocessed[24:-1]
+            self.labels = labels_unprocessed[self.window_indices[:, 12:]]
+        return self.labels
+
     @property
     def processed_file_names(self):
         return [f'{i}.pt' for i in range(self.len())]
-
-    # Helper function: given a year and month, save the graph as f'm{idx}.pt'
-    def save_graph(self, x_unprocessed, adj_t, year, month, idx): 
-        temp = [x_unprocessed[var].isel(year=year, month=month).to_numpy() for var in VAR_NAMES] # list of 24 (lat) x 72 (lon) arrays
-        lats = x_unprocessed['lat'].to_numpy() # 24
-        lats_features = np.repeat(np.sin(np.radians(lats))[:, np.newaxis], 72, axis=1)
-        temp.append(lats_features)
-        lons = x_unprocessed['lon'].to_numpy() # 72
-        lons_features = np.repeat(np.sin(np.radians(lons))[:, np.newaxis], 24, axis=1).T
-        temp.append(lons_features)
-
-        temp = np.stack(temp, axis=0) # 4 x 24 (lat) x 72 (lon)
-        x = temp.transpose(1, 2, 0).reshape(-1, 4) # (24 x 72) x 4.
-
-        # Removing NaNs (terrestial nodes)
-        valid_nodes = ~np.isnan(x).any(axis=1) # (24x72) bool array
-        filtered_x = x[valid_nodes]
-
-        valid_indices = np.where(valid_nodes)[0] # array w/ indices of valid nodes 
-        index_mapping = -np.ones(x.shape[0], dtype=int)  
-        index_mapping[valid_indices] = np.arange(len(valid_indices))  # (24x72) array, -1 if node contains NaN, new numbering for valid nodes
-
-        filtered_edges = (index_mapping[adj_t[0]] != -1) & (index_mapping[adj_t[1]] != -1)
-        filtered_adj_t = index_mapping[adj_t[:, filtered_edges]]
-
-        # Creating graph from x:
-        g = Data(x=torch.from_numpy(filtered_x), edge_index=torch.from_numpy(filtered_adj_t))
-        torch.save(g, f'{self.processed_dir}/{idx}.pt')
-
-    def process(self):
-        x_unprocessed = xr.open_dataset(f'{self.raw_dir}/SODA_train.nc', engine="netcdf4")
-        adj_t = construct_adjacency_list(method=self.adjacency_method)
         
-        for i in range(self.len()):
-            year = i // 12
-            month = i % 12
-            self.save_graph(x_unprocessed=x_unprocessed, adj_t=adj_t, year=year, month=month, idx=i)
+    def process(self):
+        adj_t = construct_adjacency_list(method=self.adjacency_method)
+        x_unprocessed = xr.open_dataset(f'{self.raw_dir}/SODA.nc', engine="netcdf4")
+
+        for time in range(self.len()): 
+            temp = [x_unprocessed[var].isel(time=time).to_numpy() for var in VAR_NAMES] # list of 24 (lat) x 72 (lon) arrays
+            lats = x_unprocessed['lat'].to_numpy() # 24
+            lats_features = np.repeat(np.sin(np.radians(lats))[:, np.newaxis], 72, axis=1)
+            temp.append(lats_features)
+            lons = x_unprocessed['lon'].to_numpy() # 72
+            lons_features = np.repeat(np.sin(np.radians(lons))[:, np.newaxis], 24, axis=1).T
+            temp.append(lons_features)
+
+            temp = np.stack(temp, axis=0) # 4 x 24 (lat) x 72 (lon)
+            x = temp.transpose(1, 2, 0).reshape(-1, 4) # (24 x 72) x 2. Caution: stacks 72's on top of each other, not 24's!
+
+            # Removing NaNs (terrestial nodes)
+            valid_nodes = ~np.isnan(x).any(axis=1) # (24x72) bool array
+            filtered_x = x[valid_nodes]
+
+            valid_indices = np.where(valid_nodes)[0] # array w/ indices of valid nodes 
+            index_mapping = -np.ones(x.shape[0], dtype=int)  
+            index_mapping[valid_indices] = np.arange(len(valid_indices))  # (24x72) array, -1 if node contains NaN, new numbering for valid nodes
+            # original index goes in, new index or -1 comes out
+
+            filtered_edges = (index_mapping[adj_t[0]] != -1) & (index_mapping[adj_t[1]] != -1)
+            filtered_adj_t = index_mapping[adj_t[:, filtered_edges]]
+
+            # Creating graph from x:
+            g = Data(x = torch.tensor(filtered_x, dtype=torch.float32), edge_index=torch.tensor(filtered_adj_t, dtype=torch.int64))
+            torch.save(g, f'{self.processed_dir}/{time}.pt')
     
     def get(self, idx):
         g = torch.load(osp.join(self.processed_dir, f'{idx}.pt'))
@@ -211,16 +204,14 @@ class SODA(Dataset):
 class CMIP(Dataset):
     '''
     OVERVIEW:
-        PyG Dataset class to load in CMIP dataset created by authors of https://spj.science.org/doi/10.34133/olar.0012
+        PyG Dataset class to load in CMIP dataset.
 
-        This dataset contains data for 15 CMIP6 models and 17 CMIP5 models. For each model, the dataset contains
-        graphs for months 0 - m and labels for months 1 - m+1. A 'row' in the dataset corresponds to 
-        36 graphs (months n - n+35) and 36 labels (months n+1 - n+36). Each row overlaps the previous by 12 months.
-        CMIP6 models run for 151 years, and CMIP5 models run for 140 years.
+        This dataset contains graphs and labels for 1980 months. The number of models in the dataaset is determined
+        by the global variable NUM_MODELS.  
 
-        We save the first 12 months (graphs) from each year to create a graph timeseries for each model, containing
-        year x 12 graphs (where year = 151 or 140). However, for each model, the last two years' graphs won't be saved 
-        because no labels exist for them (labels must exist 24 months further than graphs).
+        For each model ensemble member, save all but the last 25 graphs to create a graph timeseries. This leaves us with 
+        25 months of labels extending past the latest graph for each member. We do this because labels must exist 24 months 
+        further than graphs; the last label is a NaN so we discard it.
 
         Graph file names are 0-indexed. Graphs will be indexed consecutively (ie. if the last graph of model 0 is index x,
         the first graph of model 1 is index x+1).
@@ -231,19 +222,16 @@ class CMIP(Dataset):
 
         window_indices is a bookkeeping array for eventual shuffling/batching. It is an array of arrays. Each 
         subarray contains 36 graph indices. All valid 36-graph minibatches for the given dataset are represented by 
-        these subarrays. Because this CMIP dataset contains 32 models, the subarrays are set up such that no subarray
-        contains indices of graphs from 2 models.
+        these subarrays. Because this CMIP dataset data from multiple ensemble members, the subarrays are set up such 
+        that no subarray contains indices of graphs from 2 ensemble members.
 
         labels is another array of arrays, where each subarray contains a 24-month label (ONI) sequence corresponding to the 
         window_indices subarray of the same index. 
     '''
-
-    class CMIP(Dataset):
     def __init__(self, name='CMIP', root=DATA_ROOT, transform=None, adjacency_method='grid'):
         self.name = name
         self.root = root
         self.urls = ['https://www.dropbox.com/scl/fi/i22s15q6b9c8q205dhe20/CMIP_merged.nc?rlkey=k4qgkaluc1267tlp6y8u3uaoy&st=14yvvnu3&dl=1']   
-        self.length = None
         self.labels = None
         self.adjacency_method = adjacency_method
 
@@ -351,7 +339,7 @@ class GODAS(Dataset):
     def __init__(self, name='GODAS', root=DATA_ROOT, transform=None, adjacency_method='grid'):
         self.name = name
         self.root = root
-        self.urls = ['https://www.dropbox.com/scl/fi/nh7jlpt377sesz5urd4tr/GODAS_regridded.nc?rlkey=crfxbb5i9qjol39syqrmvcz6l&st=jwhnaich&dl=1']
+        self.urls = ['https://www.dropbox.com/scl/fi/uzlgv1khwiz9rwb1ipbsc/GODAS.nc?rlkey=14iwz99wzhdqd7ml3tdrwe660&st=nd5gpgaf&dl=1']
         self.length = None
         self.adjacency_method = adjacency_method
         super().__init__(root, transform)
@@ -366,57 +354,51 @@ class GODAS(Dataset):
 
     @property
     def raw_file_names(self):
-        return ['GODAS_regridded.nc']
+        return ['GODAS.nc']
 
     def download(self) -> None:
         for filename, url in zip(self.raw_file_names, self.urls):
             download_url(url, f'{self.raw_dir}')
 
     def len(self):
-        if self.length is None:
-            num_graphs = len(xr.open_dataset(f'{self.raw_dir}/GODAS_regridded.nc', engine="netcdf4").time.values)
-            self.length = num_graphs - 25 # 25 instead of 24 b/c last label is missing
-        return self.length
+        num_graphs = len(xr.open_dataset(f'{self.raw_dir}/GODAS.nc', engine="netcdf4").time.values)
+        return num_graphs - 24 - 1
     
     @property
     def processed_file_names(self):
         return [f'{i}.pt' for i in range(self.len())]
 
-    # Helper function: given a year and month, save the graph as f'm{idx}.pt'
-    def save_graph(self, x_unprocessed, adj_t, idx): 
-        temp = [x_unprocessed[var].to_numpy()[idx] for var in VAR_NAMES] # 2 (var) x 24 (lat) x 72 (lon)
-        x = np.transpose(temp, (1, 2, 0)).reshape(-1, 2) # (24 x 72) x 2. Caution: stacks 72's on top of each other, not 24's!
-
-        lats = x_unprocessed['lat'].to_numpy() # 24
-        lats_features = np.repeat(np.sin(np.radians(lats))[:, np.newaxis], 72, axis=1)
-        temp.append(lats_features)
-        lons = x_unprocessed['lon'].to_numpy() # 72
-        lons_features = np.repeat(np.sin(np.radians(lons))[:, np.newaxis], 24, axis=1).T
-        temp.append(lons_features)
-        temp = np.stack(temp, axis=0) # 4 x 24 (lat) x 72 (lon)
-        x = temp.transpose(1, 2, 0).reshape(-1, 4) # (24 x 72) x 2. Caution: stacks 72's on top of each other, not 24's!
-
-        # Removing NaNs (terrestial nodes)
-        valid_nodes = ~np.isnan(x).any(axis=1) # (24x72) bool array
-        filtered_x = x[valid_nodes]
-
-        valid_indices = np.where(valid_nodes)[0] # array w/ indices of valid nodes 
-        index_mapping = -np.ones(x.shape[0], dtype=int)  
-        index_mapping[valid_indices] = np.arange(len(valid_indices))  # (24x72) array, -1 if node contains NaN, new numbering for valid nodes
-
-        filtered_edges = (index_mapping[adj_t[0]] != -1) & (index_mapping[adj_t[1]] != -1)
-        filtered_adj_t = index_mapping[adj_t[:, filtered_edges]]
-
-        # Creating graph from x:
-        g = Data(x=torch.from_numpy(filtered_x), edge_index=torch.from_numpy(filtered_adj_t))
-        torch.save(g, f'{self.processed_dir}/{idx}.pt')
-
     def process(self):
-        x_unprocessed = xr.open_dataset(f'{self.raw_dir}/GODAS_regridded.nc', engine="netcdf4")
         adj_t = construct_adjacency_list(method=self.adjacency_method)
-        
-        for i in range(self.len()):
-            self.save_graph(x_unprocessed=x_unprocessed, adj_t=adj_t, idx=i)
+        x_unprocessed = xr.open_dataset(f'{self.raw_dir}/GODAS.nc', engine="netcdf4")
+
+        for time in range(self.len()): 
+            temp = [x_unprocessed[var].isel(time=time).to_numpy() for var in VAR_NAMES] # list of 24 (lat) x 72 (lon) arrays
+            lats = x_unprocessed['lat'].to_numpy() # 24
+            lats_features = np.repeat(np.sin(np.radians(lats))[:, np.newaxis], 72, axis=1)
+            temp.append(lats_features)
+            lons = x_unprocessed['lon'].to_numpy() # 72
+            lons_features = np.repeat(np.sin(np.radians(lons))[:, np.newaxis], 24, axis=1).T
+            temp.append(lons_features)
+
+            temp = np.stack(temp, axis=0) # 4 x 24 (lat) x 72 (lon)
+            x = temp.transpose(1, 2, 0).reshape(-1, 4) # (24 x 72) x 2. Caution: stacks 72's on top of each other, not 24's!
+
+            # Removing NaNs (terrestial nodes)
+            valid_nodes = ~np.isnan(x).any(axis=1) # (24x72) bool array
+            filtered_x = x[valid_nodes]
+
+            valid_indices = np.where(valid_nodes)[0] # array w/ indices of valid nodes 
+            index_mapping = -np.ones(x.shape[0], dtype=int)  
+            index_mapping[valid_indices] = np.arange(len(valid_indices))  # (24x72) array, -1 if node contains NaN, new numbering for valid nodes
+            # original index goes in, new index or -1 comes out
+
+            filtered_edges = (index_mapping[adj_t[0]] != -1) & (index_mapping[adj_t[1]] != -1)
+            filtered_adj_t = index_mapping[adj_t[:, filtered_edges]]
+
+            # Creating graph from x:
+            g = Data(x = torch.tensor(filtered_x, dtype=torch.float32), edge_index=torch.tensor(filtered_adj_t, dtype=torch.int64))
+            torch.save(g, f'{self.processed_dir}/{time}.pt')
     
     def get(self, idx):
         g = torch.load(osp.join(self.processed_dir, f'{idx}.pt'))
@@ -458,19 +440,21 @@ class CustomDataLoader(DataLoader):
         return super().__len__()
 
 class MasterDataModule(pl.LightningDataModule):
-    def __init__(self, batch_size):
+    def __init__(self, batch_size, finetune):
         super().__init__()
         self.batch_size = batch_size
         self.dataset = None
         self.sampler = None
+        self.finetune = finetune
 
     def setup(self, stage=None):
         if stage == "fit":
-            self.dataset = CMIP() 
-            self.sampler = SGS(self.dataset, group_size=self.batch_size, shuffle=True)
-        elif stage == "test":
-            self.dataset = SODA()
-            self.sampler = SGS(self.dataset, group_size=self.batch_size, shuffle=False)
+            if not self.finetune:
+                self.dataset = CMIP() 
+                self.sampler = SGS(self.dataset, group_size=self.batch_size, shuffle=True)
+            else:
+                self.dataset = SODA()
+                self.sampler = SGS(self.dataset, group_size=self.batch_size, shuffle=True)
             
     def train_dataloader(self):
         return CustomDataLoader(custom_len=self.sampler.num_batches, dataset=self.dataset, sampler=self.sampler, batch_size=self.batch_size, num_workers=NUM_WORKERS)
