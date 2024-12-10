@@ -111,7 +111,10 @@ def main():
                 lr=learning_rate
             )
 
-    data_module = MasterDataModule(batch_size=NUM_INPUT_MONTHS *  batch_size, finetune=finetune)
+    data_module = MasterDataModule(batch_size=NUM_INPUT_MONTHS *  batch_size, 
+        finetune=finetune, 
+        adjacency=ADJACENCY
+    )
 
     trainer = pl.Trainer(
         max_epochs=epochs,

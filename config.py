@@ -18,4 +18,5 @@ ENC_HIDDEN_DIM = 128
 
 # Model architecture
 NODE_EMBEDDER = 'GAT' # GAT or GCN
-ENC_DEC = 'LSTM'
+ENC_DEC = 'LSTM' # RNN or LSTM
+ADJACENCY = 'grid' # Options: grid, any new options added afterwards...

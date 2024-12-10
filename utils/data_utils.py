@@ -440,7 +440,7 @@ class CustomDataLoader(DataLoader):
         return super().__len__()
 
 class MasterDataModule(pl.LightningDataModule):
-    def __init__(self, batch_size, finetune):
+    def __init__(self, batch_size, finetune, adjacency):
         super().__init__()
         self.batch_size = batch_size
         self.dataset = None
@@ -450,10 +450,10 @@ class MasterDataModule(pl.LightningDataModule):
     def setup(self, stage=None):
         if stage == "fit":
             if not self.finetune:
-                self.dataset = CMIP() 
+                self.dataset = CMIP(adjacency_method=adjacency) 
                 self.sampler = SGS(self.dataset, group_size=self.batch_size, shuffle=True)
             else:
-                self.dataset = SODA()
+                self.dataset = SODA(adjacency_method=adjacency)
                 self.sampler = SGS(self.dataset, group_size=self.batch_size, shuffle=True)
             
     def train_dataloader(self):
