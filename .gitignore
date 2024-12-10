@@ -4,4 +4,3 @@
 /lightning_logs/
 /.DS_Store
 /checkpoints/
-config.py
