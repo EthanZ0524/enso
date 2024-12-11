@@ -446,14 +446,15 @@ class MasterDataModule(pl.LightningDataModule):
         self.dataset = None
         self.sampler = None
         self.finetune = finetune
+        self.adjacency = adjacency
 
     def setup(self, stage=None):
         if stage == "fit":
             if not self.finetune:
-                self.dataset = CMIP(adjacency_method=adjacency) 
+                self.dataset = CMIP(adjacency_method=self.adjacency) 
                 self.sampler = SGS(self.dataset, group_size=self.batch_size, shuffle=True)
             else:
-                self.dataset = SODA(adjacency_method=adjacency)
+                self.dataset = SODA(adjacency_method=self.adjacency)
                 self.sampler = SGS(self.dataset, group_size=self.batch_size, shuffle=True)
             
     def train_dataloader(self):
