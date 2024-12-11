@@ -141,20 +141,36 @@ class SODA(Dataset):
         labels is an array of arrays, where each subarray contains a 24-month label (ONI) sequence corresponding to the 
         window_indices subarray of the same index. 
     '''
-    def __init__(self, name='SODA', root=DATA_DIR, transform=None, adjacency_method='grid'):
+    def __init__(self, split, num_val_months=436, name='SODA', root=DATA_DIR, transform=None, adjacency_method='grid'):
         self.name = name
         self.root = root
         self.urls = ['https://www.dropbox.com/scl/fi/iqsidx76nexabhqv7eygz/SODA.nc?rlkey=bho72gwfiug3yompoevadx348&st=n3nvbcwf&dl=1']   
         self.labels = None
         self.adjacency_method = adjacency_method
+        self.split = split
+        self.num_val_months = num_val_months
 
+        soda_ds = xr.open_dataset(f'{self.raw_dir}/SODA.nc', engine="netcdf4")
+        self.len_entire_SODA = len(soda_ds.time.values)
+
+        full_index_list = np.arange(self.len_entire_SODA)
+        if num_val_months > 1235: 
+            raise ValueError("num_val_months cannot be greater than the length of the SODA dataset")
+
+        if split == "train":
+            index_list = full_index_list[:-num_val_months]
+        elif split == "val":
+            index_list = full_index_list[-num_val_months:]
+        else:
+            raise ValueError("Invalid split type. Use 'train' or 'val'.")
+
+        
         # Constructing window_indices, a bookkeeping array for eventual shuffling/batching. 
         # Creates a np.array of np.arrays of 36 graph indices
-
         window_indices = []
-        index_list = np.array(list(range(0, self.len())))
         window_indices.extend(np.array([index_list[i:i+NUM_INPUT_MONTHS] for i in range(len(index_list) - NUM_INPUT_MONTHS + 1)]))
         self.window_indices = np.array(window_indices) 
+        self.index_list = index_list
 
         super().__init__(root, transform)
         
@@ -174,9 +190,12 @@ class SODA(Dataset):
         for filename, url in zip(self.raw_file_names, self.urls):
             download_url(url, f'{self.raw_dir}')
 
+
     def len(self):
-        num_graphs = len(xr.open_dataset(f'{self.raw_dir}/SODA.nc', engine="netcdf4").time.values)
-        return num_graphs - 24 - 1
+        if self.split == "train":
+            return len(self.index_list)
+        elif self.split == "val":
+            return len(self.index_list) - 25
 
     def get_labels(self):
         if self.labels is None:
@@ -187,13 +206,13 @@ class SODA(Dataset):
 
     @property
     def processed_file_names(self):
-        return [f'{i}.pt' for i in range(self.len())]
+        return [f'{i}.pt' for i in range(self.len_entire_SODA)]
         
     def process(self):
         adj_t = construct_adjacency_list(method=self.adjacency_method)
         x_unprocessed = xr.open_dataset(f'{self.raw_dir}/SODA.nc', engine="netcdf4")
 
-        for time in range(self.len()): 
+        for time in range(self.len_entire_SODA): 
             temp = [x_unprocessed[var].isel(time=time).to_numpy() for var in VAR_NAMES] # list of 24 (lat) x 72 (lon) arrays
             lats = x_unprocessed['lat'].to_numpy() # 24
             lats_features = np.repeat(np.sin(np.radians(lats))[:, np.newaxis], 72, axis=1)
@@ -481,11 +500,12 @@ class MasterDataModule(pl.LightningDataModule):
                 self.dataset = CMIP(adjacency_method=self.adjacency, num_models=self.num_cmip_models) 
                 self.sampler = SGS(self.dataset, group_size=self.batch_size, shuffle=True)
             else:
-                self.dataset = SODA(adjacency_method=self.adjacency)
+                self.dataset = SODA(split="train", adjacency_method=self.adjacency)
                 self.sampler = SGS(self.dataset, group_size=self.batch_size, shuffle=True)
             
     def train_dataloader(self):
         return CustomDataLoader(custom_len=self.sampler.num_batches, dataset=self.dataset, sampler=self.sampler, batch_size=self.batch_size, num_workers=NUM_WORKERS)
 
-    def test_dataloader(self):
-        return CustomDataLoader(custom_len=self.sampler.num_batches, dataset=self.dataset, sampler=self.sampler, batch_size=self.batch_size, num_workers=NUM_WORKERS)
+    def val_dataloader(self):
+        dataset = SODA(split="val", adjacency_method=self.adjacency)
+        return CustomDataLoader(custom_len=self.sampler.num_batches, dataset=dataset, sampler=self.sampler, batch_size=self.batch_size, num_workers=NUM_WORKERS)
