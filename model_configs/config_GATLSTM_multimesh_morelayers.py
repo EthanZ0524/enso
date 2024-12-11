@@ -1,7 +1,7 @@
 # Pretraining parameters
-EPOCHS = 10
+EPOCHS = 4
 LEARNING_RATE = 1e-4
-EXPERIMENT_NAME = 'GATLSTM_newdata_large'
+EXPERIMENT_NAME = 'GATLSTM_multimesh_morelayers'
 BATCH_SIZE = 16 # number of batches of 36
 
 # Finetuning parameters
@@ -11,12 +11,12 @@ FT_BATCH_SIZE = 16
 FT_EXPERIMENT_NAME = '5epochs_1e-5'
 
 # Model parameters
-GENET_EMB_DIM = 128
-GENET_NUM_LAYERS = 7
+GENET_EMB_DIM = 64
+GENET_NUM_LAYERS = 10
 GENET_DROPOUT = 0.3
-ENC_HIDDEN_DIM = 128
+ENC_HIDDEN_DIM = 64
 
 # Model architecture
 NODE_EMBEDDER = 'GAT' # GAT or GCN
 ENC_DEC = 'LSTM' # RNN or LSTM
-ADJACENCY = 'grid' # Options: grid, any new options added afterwards...
+ADJACENCY = 'multimesh1' # Options: simple_grid, simple_grid_dense, multimesh1
