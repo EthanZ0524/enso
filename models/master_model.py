@@ -226,5 +226,19 @@ class MasterModel(pl.LightningModule):
         self.log("train_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True, batch_size=self.trainer.datamodule.sampler.group_size)
         return loss
 
+    def validation_step(self, batch, batch_idx):
+        n = self.trainer.datamodule.sampler.group_size // 36 # how many groups of 36 we got per batch
+        labels = self.trainer.datamodule.dataset.get_labels() # x * 24
+        batch_labels = torch.from_numpy(self.labels[batch_idx*n:batch_idx*n + n])
+
+        inputs = batch.to(self.device)
+        targets = batch_labels.to(self.device)
+
+        outputs = self(inputs)
+        criterion = torch.nn.MSELoss()
+        val_loss = criterion(outputs, targets.type(torch.float32))
+        self.log("val_loss", val_loss.item(), on_step=True, on_epoch=True, prog_bar=True, batch_size=self.trainer.datamodule.sampler.group_size)
+        return val_loss
+
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
