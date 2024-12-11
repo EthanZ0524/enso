@@ -81,7 +81,7 @@ class RNNDec(pl.LightningModule):
 
     def forward(self, initial_input):
         outputs = []
-        hidden = initial_input.transpose(0, 1).reshape(temp.size(1), -1).to(self.device) # batch x (emb_dim x 2)
+        hidden = initial_input.permute(1, 0, 2).reshape(initial_input.size(1), -1)  # (batch_size, 2 * emb_dim)
         inp = torch.full((hidden.size(0), 1), START, dtype=torch.float32).to(self.device)
         
         for _ in range(self.output_len):
@@ -200,7 +200,7 @@ class MasterModel(pl.LightningModule):
     def forward(self, x):
         graph_embds = self.ge(x)
         batched_graph_embds = graph_embds.reshape(graph_embds.size(0) // 36, 36, graph_embds.size(-1)) # batch x seq_len x feature_dim
-        _, encoded = self.encoder(batched_graph_embds) # encoded: 2 x batch x emb_dim
+        _, encoded = self.encoder(batched_graph_embds) # encoded: 2 x batch x emb_dim, reshaping is left to each of the classes
         outputs = self.decoder(encoded)
         return outputs
 
