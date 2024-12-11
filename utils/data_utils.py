@@ -253,14 +253,15 @@ class CMIP(Dataset):
         labels is another array of arrays, where each subarray contains a 24-month label (ONI) sequence corresponding to the 
         window_indices subarray of the same index. 
     '''
-    def __init__(self, name='CMIP', root=DATA_DIR, transform=None, adjacency_method='grid'):
+    def __init__(self, name='CMIP', num_models=NUM_MODELS, root=DATA_DIR, transform=None, adjacency_method='grid'):
         self.name = name
+        self.num_models = num_models
         self.root = root
         self.urls = ['https://www.dropbox.com/scl/fi/i22s15q6b9c8q205dhe20/CMIP_merged.nc?rlkey=k4qgkaluc1267tlp6y8u3uaoy&st=14yvvnu3&dl=1']   
         self.labels = None
         self.adjacency_method = adjacency_method
 
-        best_models = get_best_cmip_models(NUM_MODELS)['model_name'].to_numpy()
+        best_models = get_best_cmip_models(self.num_models)['model_name'].to_numpy()
         x_unprocessed = xr.open_dataset(f'{self.raw_dir}/CMIP_merged.nc', engine="netcdf4")
         self.members = [str(sim_id) for sim_id in x_unprocessed['simulation_id'].to_numpy() if sim_id.split(':')[0] in best_models]
 
@@ -465,18 +466,19 @@ class CustomDataLoader(DataLoader):
         return super().__len__()
 
 class MasterDataModule(pl.LightningDataModule):
-    def __init__(self, batch_size, finetune, adjacency):
+    def __init__(self, batch_size, finetune, adjacency, num_cmip_models):
         super().__init__()
         self.batch_size = batch_size
         self.dataset = None
         self.sampler = None
         self.finetune = finetune
         self.adjacency = adjacency
+        self.num_cmip_models = num_cmip_models
 
     def setup(self, stage=None):
         if stage == "fit":
             if not self.finetune:
-                self.dataset = CMIP(adjacency_method=self.adjacency) 
+                self.dataset = CMIP(adjacency_method=self.adjacency, num_models=self.num_cmip_models) 
                 self.sampler = SGS(self.dataset, group_size=self.batch_size, shuffle=True)
             else:
                 self.dataset = SODA(adjacency_method=self.adjacency)

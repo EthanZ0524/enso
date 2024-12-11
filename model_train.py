@@ -9,10 +9,11 @@ import gc
 import argparse
 import sys
 import warnings
+import importlib.util
+
 warnings.filterwarnings("ignore", category=FutureWarning, message=".*torch.load.*weights_only=False.*")
 
 from utils.data_utils import MasterDataModule
-from config import *
 from global_vars import *
 from models.master_model import MasterModel
 
@@ -22,6 +23,8 @@ def parse_args():
     parser.add_argument('--finetune', action='store_true', help="Finetune a pretrained model")
     parser.add_argument('-f', type=str, help="Path to checkpoint file", required=False)
     parser.add_argument('-e', type=int, help="New number of epochs to train model for", required=False)
+    parser.add_argument('--config', type=str, required=True, help="Path to the config.py file to use for training")
+
     args = parser.parse_args()
 
     if args.extend or args.finetune:
@@ -31,6 +34,18 @@ def parse_args():
         raise ValueError("Error: epochs provided for non-extension training run")
     
     return args
+
+def load_config_into_globals(config_path, global_vars):
+    """Load the config module and inject its variables into the global namespace."""
+    spec = importlib.util.spec_from_file_location("config", config_path)
+    config = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(config)
+
+    # Inject variables from config into the provided global_vars dictionary
+    for attr in dir(config):
+        if not attr.startswith("__"):  # Ignore special/private attributes
+            global_vars[attr] = getattr(config, attr)
+
 
 def setup_training_dirs(experiment_name: str = None, root_dir: str = "./", timestamp: str = None):
     # Create directories if they don't exist
@@ -59,6 +74,10 @@ def main():
     extend = args.extend
     finetune = args.finetune            
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Load the specified config into globals
+    globals_dict = globals()
+    load_config_into_globals(args.config, globals_dict)
 
     if extend:
         epochs = args.e
@@ -117,7 +136,8 @@ def main():
 
     data_module = MasterDataModule(batch_size=NUM_INPUT_MONTHS *  batch_size, 
         finetune=finetune, 
-        adjacency=ADJACENCY
+        adjacency=ADJACENCY,
+        num_cmip_models=NUM_MODELS
     )
 
     trainer = pl.Trainer(
