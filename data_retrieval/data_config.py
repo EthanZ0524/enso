@@ -1,1 +1,1 @@
-DATA_DIR = "/scratch/users/ethanz/enso"
+DATA_DIR = "/scratch/users/ethanz/enso/data"
