@@ -81,7 +81,7 @@ class RNNDec(pl.LightningModule):
 
     def forward(self, initial_input):
         outputs = []
-        hidden = initial_input.transpose(0, 1).reshape(temp.size(1), -1).to(self.device) # batch x (emb_dim x 2)
+        hidden = initial_input.permute(1, 0, 2).reshape(initial_input.size(1), -1)  # (batch_size, 2 * emb_dim)
         inp = torch.full((hidden.size(0), 1), START, dtype=torch.float32).to(self.device)
         
         for _ in range(self.output_len):
@@ -200,7 +200,7 @@ class MasterModel(pl.LightningModule):
     def forward(self, x):
         graph_embds = self.ge(x)
         batched_graph_embds = graph_embds.reshape(graph_embds.size(0) // 36, 36, graph_embds.size(-1)) # batch x seq_len x feature_dim
-        _, encoded = self.encoder(batched_graph_embds) # encoded: 2 x batch x emb_dim
+        _, encoded = self.encoder(batched_graph_embds) # encoded: 2 x batch x emb_dim, reshaping is left to each of the classes
         outputs = self.decoder(encoded)
         return outputs
 
@@ -225,6 +225,20 @@ class MasterModel(pl.LightningModule):
         loss = criterion(outputs, targets.type(torch.float32))
         self.log("train_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True, batch_size=self.trainer.datamodule.sampler.group_size)
         return loss
+
+    def validation_step(self, batch, batch_idx):
+        n = self.trainer.datamodule.sampler.group_size // 36 # how many groups of 36 we got per batch
+        labels = self.trainer.datamodule.dataset.get_labels() # x * 24
+        batch_labels = torch.from_numpy(self.labels[batch_idx*n:batch_idx*n + n])
+
+        inputs = batch.to(self.device)
+        targets = batch_labels.to(self.device)
+
+        outputs = self(inputs)
+        criterion = torch.nn.MSELoss()
+        val_loss = criterion(outputs, targets.type(torch.float32))
+        self.log("val_loss", val_loss.item(), on_step=True, on_epoch=True, prog_bar=True, batch_size=self.trainer.datamodule.sampler.group_size)
+        return val_loss
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
