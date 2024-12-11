@@ -20,7 +20,8 @@ from global_vars import *
 
 from data_retrieval.cmip_data_utils import get_best_cmip_models
 
-DATA_ROOT = subprocess.check_output(['git', 'rev-parse', '--show-toplevel']).strip().decode('utf-8') + '/data'
+from data_retrieval.data_config import DATA_DIR 
+
 VAR_NAMES = ['sst', 't300'] # hardcoded, sorry...
 
 def get_allocated_cpus():
@@ -31,66 +32,90 @@ def get_allocated_cpus():
 
 NUM_WORKERS = min(get_allocated_cpus() - 1, 0)
 
-def construct_adjacency_list(method="grid"):
+
+
+def get_neighbors(base_rows, base_cols, i, j, method, scale=1):
+    if type(scale) != int: raise ValueError("scale must be int")
+    
+    neighbors = []
+
+    if method == "grid" or method == "dense_grid":
+        directions = [(-scale, 0), (scale, 0), (0, -scale), (0, scale)]
+        if method == "dense_grid":
+            directions += [(-scale, -scale), (-scale, scale), (scale, -scale), (scale, scale)]
+
+        for di, dj in directions:
+            neighbor_row = i + di
+            neighbor_col = (j + dj) % base_cols  # Periodic in east-west
+            if 0 <= neighbor_row < base_rows:
+                neighbors.append((neighbor_row, neighbor_col))
+
+    return neighbors
+
+
+def construct_adjacency_list_core(grid_size, method="grid", scales=None, origins=None, verbose=False):
     """
     Helper function: generates the adjacency list for a 24x72 grid of nodes.
 
     Params:
-        method (str): method to use for constructing adjacency list. The following options are available:
-            "grid": trivial connection of each node to its 4 up-down-left-right neighbors, if they exist
-            "mesh1": to be implemented
-            "mesh2": to be implemented
+        method (str): base grid method. Options:
+            "grid": connect each node to its 4 up-down-left-right neighbors.
+            "dense_grid": connect each node to its 8 neighbors (including diagonals).
+        scales (list of int): list of scales for generating downscaled grids. Each scale indicates the reduction factor.
+        origins (list of tuple): list of origin tuples (row, col) for each downscaled grid. Should match the length of scales.
 
     Returns:
         np.array: adjacency list of shape (2, num_edges) 
     """
-    rows, cols = 24, 72
+    rows, cols = grid_size
     adjacency_list = []
 
-    if method == "grid":    
-        for i in range(rows):
-            for j in range(cols):
-                current_index = i * cols + j
-                # Row above
-                if i > 0: 
-                    above_index = (i - 1) * cols + j
-                    adjacency_list.append((current_index, above_index))
+    if not scales:
+        if origins: 
+            raise ValueError("Cannot set `origins` if your scale is 1")
+        scales = [1]
 
-                # Row below
-                if i < rows - 1: 
-                    below_index = (i + 1) * cols + j
-                    adjacency_list.append((current_index, below_index))
+    if not origins:
+        origins = [(0,0) for i in range(len(scales))]
 
-                # Column left (wrap around for periodic boundary)
-                left_index = i * cols + (j - 1) % cols
-                adjacency_list.append((current_index, left_index))
+    if len(scales) != len(origins):
+            raise ValueError("`scales` and `origins` must have the same length.")
 
-                # Column right (wrap around for periodic boundary)
-                right_index = i * cols + (j + 1) % cols
-                adjacency_list.append((current_index, right_index))
+    for scale, origin in zip(scales, origins):
+        for i in range(origin[0], rows, scale):
+            for j in range(origin[1], cols, scale):
+                curr_index = i * cols + j 
 
-    elif method == "dense_grid":
-        for i in range(rows):
-            for j in range(cols):
-                current_index = i * cols + j
-
-                # Loop over all neighbors (including diagonals)
-                for di in [-1, 0, 1]:
-                    for dj in [-1, 0, 1]:
-                        if di == 0 and dj == 0:
-                            continue  # Skip the current node
-
-                        neighbor_row = i + di
-                        neighbor_col = (j + dj) % cols  # Periodic in east-west direction
-
-                        # Check if neighbor is within bounds in the north-south direction
-                        if 0 <= neighbor_row < rows:
-                            neighbor_index = neighbor_row * cols + neighbor_col
-                            adjacency_list.append((current_index, neighbor_index))
-
+                neighbors = get_neighbors(rows, cols, i, j, method, scale=scale)
+                if verbose: print(f"node {i,j} has neighbors {neighbors}")
+                for neighbor_i, neighbor_j in neighbors:
+                    neighbor_index = neighbor_i * cols + neighbor_j 
+                    if verbose: print(f"appending {(curr_index, neighbor_index)}")
+                    adjacency_list.append((curr_index, neighbor_index))
 
     adj_t = np.array(adjacency_list).T
     return adj_t
+
+
+def construct_adjacency_list(method):
+    """ 
+    Wrapper function for constructing adjacency list with some presets
+    """
+    grid_size = (24, 72)
+
+    if method == "simple_grid": 
+        return construct_adjacency_list_core(grid_size, method="grid", scales=[1], origins=[(0,0)])
+    
+    elif method == "simple_grid_dense":
+        return construct_adjacency_list_core(grid_size, method="dense_grid", scales=[1], origins=[(0,0)])
+
+    elif method == "multimesh1":
+        return construct_adjacency_list_core(grid_size, method="dense_grid", 
+                                            scales=[1, 3, 6], origins=[(0,0), (1,1), (4,1)])
+    
+    else:
+        raise NotImplementedError(f"That adjacency method has not been implemented!\
+             Current settings: simple_grid, simple_grid_dense, multimesh1 ")
 
 class SODA(Dataset):
     '''
@@ -116,7 +141,7 @@ class SODA(Dataset):
         labels is an array of arrays, where each subarray contains a 24-month label (ONI) sequence corresponding to the 
         window_indices subarray of the same index. 
     '''
-    def __init__(self, name='SODA', root=DATA_ROOT, transform=None, adjacency_method='grid'):
+    def __init__(self, name='SODA', root=DATA_DIR, transform=None, adjacency_method='grid'):
         self.name = name
         self.root = root
         self.urls = ['https://www.dropbox.com/scl/fi/iqsidx76nexabhqv7eygz/SODA.nc?rlkey=bho72gwfiug3yompoevadx348&st=n3nvbcwf&dl=1']   
@@ -228,7 +253,7 @@ class CMIP(Dataset):
         labels is another array of arrays, where each subarray contains a 24-month label (ONI) sequence corresponding to the 
         window_indices subarray of the same index. 
     '''
-    def __init__(self, name='CMIP', root=DATA_ROOT, transform=None, adjacency_method='grid'):
+    def __init__(self, name='CMIP', root=DATA_DIR, transform=None, adjacency_method='grid'):
         self.name = name
         self.root = root
         self.urls = ['https://www.dropbox.com/scl/fi/i22s15q6b9c8q205dhe20/CMIP_merged.nc?rlkey=k4qgkaluc1267tlp6y8u3uaoy&st=14yvvnu3&dl=1']   
@@ -336,7 +361,7 @@ class GODAS(Dataset):
         Because we never train on GODAS, we don't need window_indices or labels class
         variables. The dataset is small enough that we can directly load labels in predict_plot.ipynb 
     '''
-    def __init__(self, name='GODAS', root=DATA_ROOT, transform=None, adjacency_method='grid'):
+    def __init__(self, name='GODAS', root=DATA_DIR, transform=None, adjacency_method='grid'):
         self.name = name
         self.root = root
         self.urls = ['https://www.dropbox.com/scl/fi/uzlgv1khwiz9rwb1ipbsc/GODAS.nc?rlkey=14iwz99wzhdqd7ml3tdrwe660&st=nd5gpgaf&dl=1']
