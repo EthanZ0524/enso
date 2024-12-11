@@ -98,7 +98,11 @@ def main():
         )
 
     if finetune:
-        model = MasterModel.load_from_checkpoint(checkpoint_path) # this loads weights but the training starts fresh.
+        model = MasterModel.load_from_checkpoint(checkpoint_path) # this loads weights but the training starts fresh
+        for param in model.encoder.parameters():
+            param.requires_grad = False
+        for param in model.ge.parameters():
+            param.requires_grad = False
 
     else:
         model = MasterModel(graph_emb_dim=GENET_EMB_DIM, 
