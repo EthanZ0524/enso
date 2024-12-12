@@ -117,7 +117,7 @@ def construct_adjacency_list(method):
         raise NotImplementedError(f"That adjacency method has not been implemented!\
              Current settings: simple_grid, simple_grid_dense, multimesh1 ")
 
-class SODA(Dataset):
+class SODA_train(Dataset):
     '''
     OVERVIEW:
         PyG Dataset class to load in SODA dataset.
@@ -140,6 +140,8 @@ class SODA(Dataset):
 
         labels is an array of arrays, where each subarray contains a 24-month label (ONI) sequence corresponding to the 
         window_indices subarray of the same index. 
+
+        Hardcoded length: 800 graphs
     '''
     def __init__(self, name='SODA', root=DATA_DIR, transform=None, adjacency_method='grid'):
         self.name = name
@@ -147,13 +149,13 @@ class SODA(Dataset):
         self.urls = ['https://www.dropbox.com/scl/fi/iqsidx76nexabhqv7eygz/SODA.nc?rlkey=bho72gwfiug3yompoevadx348&st=n3nvbcwf&dl=1']   
         self.labels = None
         self.adjacency_method = adjacency_method
-
+        
         # Constructing window_indices, a bookkeeping array for eventual shuffling/batching. 
         # Creates a np.array of np.arrays of 36 graph indices
 
+        # using graphs 0 - 799
         window_indices = []
-        index_list = np.array(list(range(0, self.len())))
-        window_indices.extend(np.array([index_list[i:i+NUM_INPUT_MONTHS] for i in range(len(index_list) - NUM_INPUT_MONTHS + 1)]))
+        window_indices.extend(np.array([np.arange(i, i+36) for i in range(765)])) # last window will be 764 - 799
         self.window_indices = np.array(window_indices) 
 
         super().__init__(root, transform)
@@ -164,7 +166,7 @@ class SODA(Dataset):
     
     @property
     def processed_dir(self) -> str:
-        return osp.join(self.root, self.name, f'{self.adjacency_method}_processed')
+        return osp.join(self.root, self.name, 'train', f'{self.adjacency_method}_processed')
 
     @property
     def raw_file_names(self):
@@ -175,25 +177,24 @@ class SODA(Dataset):
             download_url(url, f'{self.raw_dir}')
 
     def len(self):
-        num_graphs = len(xr.open_dataset(f'{self.raw_dir}/SODA.nc', engine="netcdf4").time.values)
-        return num_graphs - 24 - 1
+        return 800
 
     def get_labels(self):
         if self.labels is None:
             labels_unprocessed = xr.open_dataset(f'{self.raw_dir}/SODA.nc', engine="netcdf4")['oni'].to_numpy() # 1236
-            labels_unprocessed = labels_unprocessed[24:-1]
+            labels_unprocessed = labels_unprocessed[24:-1] # first element is first label of interest
             self.labels = labels_unprocessed[self.window_indices[:, 12:]]
         return self.labels
 
     @property
     def processed_file_names(self):
-        return [f'{i}.pt' for i in range(self.len())]
+        return [f'{i}.pt' for i in range(800)]
         
     def process(self):
         adj_t = construct_adjacency_list(method=self.adjacency_method)
         x_unprocessed = xr.open_dataset(f'{self.raw_dir}/SODA.nc', engine="netcdf4")
 
-        for time in range(self.len()): 
+        for time in range(800): 
             temp = [x_unprocessed[var].isel(time=time).to_numpy() for var in VAR_NAMES] # list of 24 (lat) x 72 (lon) arrays
             lats = x_unprocessed['lat'].to_numpy() # 24
             lats_features = np.repeat(np.sin(np.radians(lats))[:, np.newaxis], 72, axis=1)
@@ -220,6 +221,116 @@ class SODA(Dataset):
             # Creating graph from x:
             g = Data(x = torch.tensor(filtered_x, dtype=torch.float32), edge_index=torch.tensor(filtered_adj_t, dtype=torch.int64))
             torch.save(g, f'{self.processed_dir}/{time}.pt')
+    
+    def get(self, idx):
+        g = torch.load(osp.join(self.processed_dir, f'{idx}.pt'))
+        return g
+
+class SODA_val(Dataset):
+    '''
+    OVERVIEW:
+        PyG Dataset class to load in SODA dataset.
+
+        This dataset contains graphs and labels for 1236 months. 
+
+        We save all but the last 25 graphs to create a graph timeseries. This leaves us with 25 months of 
+        labels extending past our latest graph. We do this because labels must exist 24 months further than graphs;
+        the last label is a NaN so we discard it.
+
+        Graph file names are 0-indexed.
+
+    WINDOW_INDICES AND LABELS
+        The most important implementations in this class other than the graph processing is the creation of the self.window_indices
+        and self.labels variables. Both will be necessary for proper shuffling and label retrieval further downstream.
+
+        window_indices is a bookkeeping array for eventual shuffling/batching. It is an array of arrays. Each 
+        subarray contains 36 graph indices. All valid 36-graph minibatches for the given dataset are represented by 
+        these subarrays.
+
+        labels is an array of arrays, where each subarray contains a 24-month label (ONI) sequence corresponding to the 
+        window_indices subarray of the same index. 
+
+        Hardcoded length: 411 graphs (1236 - 800 - 24 - 1)
+    '''
+    def __init__(self, name='SODA', root=DATA_DIR, transform=None, adjacency_method='grid'):
+        self.name = name
+        self.root = root
+        self.urls = ['https://www.dropbox.com/scl/fi/iqsidx76nexabhqv7eygz/SODA.nc?rlkey=bho72gwfiug3yompoevadx348&st=n3nvbcwf&dl=1']   
+        self.labels = None
+        self.adjacency_method = adjacency_method
+        
+        # Constructing window_indices, a bookkeeping array for eventual shuffling/batching. 
+        # Creates a np.array of np.arrays of 36 graph indices
+        # saving graphs 800 - 1210
+
+        window_indices = []
+        window_indices.extend(np.array([np.arange(i, i+36) for i in range(376)])) # last window will be 375 - 410
+        # first window raw indices: 800 - 835. First label should then be 836
+        self.window_indices = np.array(window_indices) 
+
+        super().__init__(root, transform)
+        
+    @property
+    def raw_dir(self) -> str:
+        return osp.join(self.root, self.name, 'raw')
+    
+    @property
+    def processed_dir(self) -> str:
+        return osp.join(self.root, self.name, 'val', f'{self.adjacency_method}_processed')
+
+    @property
+    def raw_file_names(self):
+        return ['SODA.nc']
+
+    def download(self) -> None:
+        for filename, url in zip(self.raw_file_names, self.urls):
+            download_url(url, f'{self.raw_dir}')
+
+    def len(self):
+        return 411
+
+    def get_labels(self):
+        if self.labels is None:
+            labels_unprocessed = xr.open_dataset(f'{self.raw_dir}/SODA.nc', engine="netcdf4")['oni'].to_numpy() # 1236
+            labels_unprocessed = labels_unprocessed[824:-1] 
+            self.labels = labels_unprocessed[self.window_indices[:, 12:]]
+        return self.labels
+
+    @property
+    def processed_file_names(self):
+        return [f'{i}.pt' for i in range(self.len())]
+        
+    def process(self):
+        adj_t = construct_adjacency_list(method=self.adjacency_method)
+        x_unprocessed = xr.open_dataset(f'{self.raw_dir}/SODA.nc', engine="netcdf4")
+
+        for idx, time in enumerate(range(800, 1211)): 
+            temp = [x_unprocessed[var].isel(time=time).to_numpy() for var in VAR_NAMES] # list of 24 (lat) x 72 (lon) arrays
+            lats = x_unprocessed['lat'].to_numpy() # 24
+            lats_features = np.repeat(np.sin(np.radians(lats))[:, np.newaxis], 72, axis=1)
+            temp.append(lats_features)
+            lons = x_unprocessed['lon'].to_numpy() # 72
+            lons_features = np.repeat(np.sin(np.radians(lons))[:, np.newaxis], 24, axis=1).T
+            temp.append(lons_features)
+
+            temp = np.stack(temp, axis=0) # 4 x 24 (lat) x 72 (lon)
+            x = temp.transpose(1, 2, 0).reshape(-1, 4) # (24 x 72) x 2. Caution: stacks 72's on top of each other, not 24's!
+
+            # Removing NaNs (terrestial nodes)
+            valid_nodes = ~np.isnan(x).any(axis=1) # (24x72) bool array
+            filtered_x = x[valid_nodes]
+
+            valid_indices = np.where(valid_nodes)[0] # array w/ indices of valid nodes 
+            index_mapping = -np.ones(x.shape[0], dtype=int)  
+            index_mapping[valid_indices] = np.arange(len(valid_indices))  # (24x72) array, -1 if node contains NaN, new numbering for valid nodes
+            # original index goes in, new index or -1 comes out
+
+            filtered_edges = (index_mapping[adj_t[0]] != -1) & (index_mapping[adj_t[1]] != -1)
+            filtered_adj_t = index_mapping[adj_t[:, filtered_edges]]
+
+            # Creating graph from x:
+            g = Data(x = torch.tensor(filtered_x, dtype=torch.float32), edge_index=torch.tensor(filtered_adj_t, dtype=torch.int64))
+            torch.save(g, f'{self.processed_dir}/{idx}.pt')
     
     def get(self, idx):
         g = torch.load(osp.join(self.processed_dir, f'{idx}.pt'))
@@ -471,6 +582,8 @@ class MasterDataModule(pl.LightningDataModule):
         self.batch_size = batch_size
         self.dataset = None
         self.sampler = None
+        self.val_dataset = None
+        self.val_sampler = None
         self.finetune = finetune
         self.adjacency = adjacency
         self.num_cmip_models = num_cmip_models
@@ -481,11 +594,14 @@ class MasterDataModule(pl.LightningDataModule):
                 self.dataset = CMIP(adjacency_method=self.adjacency, num_models=self.num_cmip_models) 
                 self.sampler = SGS(self.dataset, group_size=self.batch_size, shuffle=True)
             else:
-                self.dataset = SODA(adjacency_method=self.adjacency)
+                self.dataset = SODA_train(adjacency_method=self.adjacency)
                 self.sampler = SGS(self.dataset, group_size=self.batch_size, shuffle=True)
+
+        self.val_dataset = SODA_val(adjacency_method=self.adjacency)
+        self.val_sampler = SGS(self.val_dataset, group_size=36, shuffle=False) # want to do window-by-window prediction
             
     def train_dataloader(self):
         return CustomDataLoader(custom_len=self.sampler.num_batches, dataset=self.dataset, sampler=self.sampler, batch_size=self.batch_size, num_workers=NUM_WORKERS)
 
-    def test_dataloader(self):
-        return CustomDataLoader(custom_len=self.sampler.num_batches, dataset=self.dataset, sampler=self.sampler, batch_size=self.batch_size, num_workers=NUM_WORKERS)
+    def val_dataloader(self):
+        return CustomDataLoader(custom_len=self.val_sampler.num_batches, dataset=self.val_dataset, sampler=self.val_sampler, batch_size=36, num_workers=NUM_WORKERS)
