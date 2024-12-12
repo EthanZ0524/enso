@@ -172,6 +172,7 @@ class MasterModel(pl.LightningModule):
         self.shuffle_indices = None # used if we need to shuffle data and labels
         self.learning_rate = lr
         self.labels = None
+        self.val_labels = None
 
         self.ge = GENet(hidden_dim=graph_emb_dim, 
             num_layers=ge_net_layers, 
@@ -227,9 +228,12 @@ class MasterModel(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        n = self.trainer.datamodule.sampler.group_size // 36 # how many groups of 36 we got per batch
-        labels = self.trainer.datamodule.dataset.get_labels() # x * 24
-        batch_labels = torch.from_numpy(self.labels[batch_idx*n:batch_idx*n + n])
+        n = self.trainer.datamodule.val_sampler.group_size // 36 # how many groups of 36 we got per batch
+        if batch_idx == 0: # triggered @ start of every epoch
+            labels = self.trainer.datamodule.val_dataset.get_labels() # x * 24
+            self.val_labels = labels[:self.trainer.datamodule.val_sampler.num_batches * n]
+            
+        batch_labels = torch.from_numpy(self.val_labels[batch_idx*n:batch_idx*n + n])
 
         inputs = batch.to(self.device)
         targets = batch_labels.to(self.device)
@@ -237,7 +241,7 @@ class MasterModel(pl.LightningModule):
         outputs = self(inputs)
         criterion = torch.nn.MSELoss()
         val_loss = criterion(outputs, targets.type(torch.float32))
-        self.log("val_loss", val_loss.item(), on_step=True, on_epoch=True, prog_bar=True, batch_size=self.trainer.datamodule.sampler.group_size)
+        self.log("val_loss", val_loss.item(), on_step=True, on_epoch=True, prog_bar=True, batch_size=self.trainer.datamodule.val_sampler.group_size)
         return val_loss
 
     def configure_optimizers(self):

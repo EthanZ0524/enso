@@ -112,9 +112,9 @@ def main():
     )
     
     logger = WandbLogger(
-            save_dir='./logs',
-            name=experiment_name
-        )
+        save_dir='./logs',
+        name=experiment_name
+    )
 
     if finetune:
         model = MasterModel.load_from_checkpoint(checkpoint_path) # this loads weights but the training starts fresh.
