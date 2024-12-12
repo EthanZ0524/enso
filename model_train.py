@@ -131,6 +131,7 @@ def main():
                 enc_hidden_dim=ENC_HIDDEN_DIM, 
                 enc_dec=ENC_DEC,
                 output_length=NUM_OUTPUT_MONTHS,
+                num_heads=NUM_HEADS,
                 lr=learning_rate
             )
 
