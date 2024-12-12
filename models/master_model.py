@@ -32,7 +32,8 @@ class GENet(pl.LightningModule):
         num_layers, 
         dropout,
         node_embedder, 
-        node_dim=NUM_VARS,
+        num_heads,
+        node_dim=NUM_VARS
     ):
 
         super(GENet, self).__init__()
@@ -42,11 +43,22 @@ class GENet(pl.LightningModule):
             self.node_embedder = GATConv
         else:
             ValueError('Node embedder type not recognized.')
+        
+        self.num_heads = num_heads
 
-        self.convs = torch.nn.ModuleList([self.node_embedder(in_channels=node_dim, out_channels=hidden_dim)] +
-            [self.node_embedder(in_channels=hidden_dim, out_channels=hidden_dim) for i in range(num_layers - 1)])
+        self.convs = torch.nn.ModuleList(
+            [self.node_embedder(in_channels=node_dim, out_channels=hidden_dim, heads=self.num_heads)] +
+            [self.node_embedder(in_channels=hidden_dim * self.num_heads, out_channels=hidden_dim, \
+                heads=self.num_heads) for _ in range(num_layers - 2)] +
+            # final layer takes the average over the attention heads (concat=False)
+            [self.node_embedder(in_channels=hidden_dim * self.num_heads, out_channels=hidden_dim, \
+                heads=self.num_heads, concat=False)] 
+        )
 
-        self.bns = torch.nn.ModuleList([torch.nn.BatchNorm1d(num_features = hidden_dim) for i in range(num_layers - 1)])
+        self.bns = torch.nn.ModuleList(
+            [torch.nn.BatchNorm1d(num_features=hidden_dim * self.num_heads) for _ in range(num_layers - 1)]
+        )
+
         self.dropout = dropout
         self.pool = global_mean_pool
 
@@ -164,6 +176,7 @@ class MasterModel(pl.LightningModule):
         enc_hidden_dim, 
         enc_dec: str, # LSTM, RNN, etc.
         output_length, 
+        num_heads,
         lr
     ):
     
@@ -177,7 +190,8 @@ class MasterModel(pl.LightningModule):
         self.ge = GENet(hidden_dim=graph_emb_dim, 
             num_layers=ge_net_layers, 
             dropout=ge_net_dropout,
-            node_embedder=node_embedder)
+            node_embedder=node_embedder,
+            num_heads=num_heads)
 
         encoder_type = decoder_type = None
 
