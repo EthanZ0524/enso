@@ -1,5 +1,7 @@
 '''
-Simple Dataset classes to help with loading in CMIP and SODA datasets.
+Simple PyG Dataset classes to help with loading in CMIP and SODA datasets.
+
+These are united in a MasterDataModule for Lightning. 
 
 For more extensive documentation, please see enso/docs/data_utils.md
 '''
@@ -22,7 +24,7 @@ from data_retrieval.cmip_data_utils import get_best_cmip_models
 
 from data_retrieval.data_config import DATA_DIR 
 
-VAR_NAMES = ['sst', 't300'] # hardcoded, sorry...
+VAR_NAMES = ['sst', 't300'] 
 
 def get_allocated_cpus():
     try:
@@ -31,7 +33,6 @@ def get_allocated_cpus():
         return 0
 
 NUM_WORKERS = min(get_allocated_cpus() - 1, 0)
-
 
 
 def get_neighbors(base_rows, base_cols, i, j, method, scale=1):
